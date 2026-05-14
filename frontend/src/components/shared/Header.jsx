@@ -18,6 +18,7 @@ export function Header({ wsStatus, onConnect, mainView, setMainView }) {
         <button className={`nb ${mainView==="discovery"?"on":""}`} onClick={() => setMainView("discovery")}>◈ Discovery</button>
         <button className={`nb ${mainView==="api"?"on":""}`}       onClick={() => setMainView("api")}>🔌 API Agent</button>
         <button className={`nb ${mainView==="runner"?"on":""}`}    onClick={() => setMainView("runner")}>▶ Runner</button>
+        <button className={`nb ${mainView==="vault"?"on":""}`}     onClick={() => setMainView("vault")}>🔐 Vault</button>
       </div>
     </div>
   );

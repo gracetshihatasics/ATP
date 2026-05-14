@@ -1,13 +1,13 @@
 import "dotenv/config";
-import express          from "express";
+import express     from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
-import cors             from "cors";
-import crypto           from "crypto";
-import { config }       from "./src/config/index.js";
+import cors        from "cors";
+import crypto      from "crypto";
+import { config }  from "./src/config/index.js";
 import { messageRouter } from "./src/ws/messageRouter.js";
 import { sessionManager } from "./src/ws/sessionManager.js";
-import { send }         from "./src/ws/send.js";
+import { send }    from "./src/ws/send.js";
 import { discoverRoute, scenarioRoute } from "./src/routes/aiRoutes.js";
 import {
   importSpecRoute,
@@ -16,11 +16,12 @@ import {
   runAllScenariosRoute,
   getResultsRoute,
 } from "./src/routes/apiAgentRoutes.js";
+import { vaultRoutes } from "./src/vault/vaultRoutes.js";
 
+// ── HTTP server ───────────────────────────────────────────────────────────────
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.json());
 
 const httpServer = createServer(app);
 
@@ -29,7 +30,7 @@ app.get("/health", (_, res) =>
   res.json({ ok: true, sessions: sessionManager.count() })
 );
 
-// AI routes
+// AI routes — proxied from frontend to avoid CORS
 app.post("/api/discover",  discoverRoute);
 app.post("/api/scenario",  scenarioRoute);
 
@@ -40,24 +41,32 @@ app.post("/api/agent/run",            runScenarioRoute);
 app.post("/api/agent/run-all",        runAllScenariosRoute);
 app.get( "/api/agent/results/:runId", getResultsRoute);
 
-// WebSocket
+// Vault routes
+vaultRoutes(app);
+
+// ── WebSocket server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });
+
 wss.on("connection", (ws) => {
   const sessionId = crypto.randomUUID();
   ws.sessionId = sessionId;
   console.log(`[WS] +  ${sessionId}`);
+
   ws.on("message", async (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
     await messageRouter(ws, sessionId, msg);
   });
+
   ws.on("close", () => {
     sessionManager.destroy(sessionId);
     console.log(`[WS] -  ${sessionId}`);
   });
+
   send(ws, { type: "connected", sessionId });
 });
 
+// ── Start ─────────────────────────────────────────────────────────────────────
 httpServer.listen(config.port, () => {
   console.log(`\n🤖  ATP Backend  →  http://localhost:${config.port}`);
   console.log(`📡  WebSocket    →  ws://localhost:${config.port}\n`);
