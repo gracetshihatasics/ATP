@@ -1,5 +1,6 @@
 import { resultsStore }              from "../results/store.js";
 import { toJUnitXML, toAllureJSON, toJSONSummary } from "../results/ciExport.js";
+import { analyseFailure, analyseSuite } from "../results/failureAnalyser.js";
 
 export function resultsRoutes(app) {
 
@@ -68,6 +69,32 @@ export function resultsRoutes(app) {
     const { limit } = req.query;
     const { records } = resultsStore.getAll({ limit: parseInt(limit) || 100 });
     res.json(toJSONSummary(records, req.query.suite || "ATP"));
+  });
+
+  // ── AI failure analysis ────────────────────────────────────────────────────
+  app.get("/api/results/:id/analyse", async (req, res) => {
+    const run = resultsStore.getById(req.params.id);
+    if (!run) return res.status(404).json({ error: "Run not found" });
+    if (run.status === "pass") return res.json({ ok: true, analysis: { rootCause: "Test passed — no analysis needed", category: "none", severity: "none", recommendations: [] } });
+    try {
+      const analysis = await analyseFailure(run);
+      res.json({ ok: true, analysis });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── AI suite analysis ──────────────────────────────────────────────────────
+  app.post("/api/results/analyse-suite", async (req, res) => {
+    const { runIds } = req.body;
+    if (!runIds?.length) return res.status(400).json({ error: "runIds required" });
+    const runs = runIds.map(id => resultsStore.getById(id)).filter(Boolean);
+    try {
+      const insight = await analyseSuite(runs);
+      res.json({ ok: true, insight });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ── Clear all results ──────────────────────────────────────────────────────

@@ -1,8 +1,13 @@
 const BACKEND = "http://localhost:3579";
 
 export async function getResults(params = {}) {
-  const q = new URLSearchParams(params).toString();
-  const res = await fetch(`${BACKEND}/api/results?${q}`);
+  // Only include defined, non-empty params
+  const clean = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "" && v !== "all") clean[k] = v;
+  }
+  const q = new URLSearchParams(clean).toString();
+  const res = await fetch(`${BACKEND}/api/results${q ? `?${q}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch results");
   return res.json();
 }
@@ -35,9 +40,25 @@ export async function clearAll() {
 
 export function exportJUnitURL(params = {}) {
   const q = new URLSearchParams(params).toString();
-  return `${BACKEND}/api/results/export/junit?${q}`;
+  return `${BACKEND}/api/results/export/junit${q ? `?${q}` : ""}`;
 }
 
 export function exportSummaryURL() {
   return `${BACKEND}/api/results/export/summary`;
+}
+
+export async function analyseRun(id) {
+  const res = await fetch(`${BACKEND}/api/results/${id}/analyse`);
+  if (!res.ok) throw new Error("Analysis failed");
+  return (await res.json()).analysis;
+}
+
+export async function analyseSuiteRuns(runIds) {
+  const res = await fetch(`${BACKEND}/api/results/analyse-suite`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ runIds }),
+  });
+  if (!res.ok) throw new Error("Suite analysis failed");
+  return (await res.json()).insight;
 }
