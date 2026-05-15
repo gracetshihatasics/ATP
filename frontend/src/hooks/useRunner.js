@@ -35,6 +35,25 @@ export function useRunner() {
 
   const handleMessage = useCallback((msg) => {
     switch (msg.type) {
+      case "page_analysis":
+        addRunLog(`◈ Page: ${msg.analysis?.pageType} — ${msg.analysis?.summary}`, "ai");
+        if (msg.analysis?.testingInsights) addRunLog(`◈ ${msg.analysis.testingInsights}`, "ai");
+        break;
+
+      case "form_analysis":
+        addRunLog(`◈ Form: ${msg.analysis?.formPurpose} — ${msg.analysis?.fields?.length} fields${msg.analysis?.isMultiStep ? ` (${msg.analysis?.totalSteps} steps)` : ""}`, "ai");
+        break;
+
+      case "adaptive_step_start":
+        setCurrentStep(msg.index);
+        setSteps(prev => prev.map((s, i) => i === msg.index ? { ...s, status: "running", description: msg.description } : s));
+        addRunLog(`Step ${msg.index + 1}/${msg.total}: ${msg.description}`, "action"); break;
+
+      case "adaptive_step_done":
+        setSteps(prev => prev.map((s, i) => i === msg.index ? { ...s, status: msg.status, screenshot: msg.screenshot, error: msg.error } : s));
+        if (msg.screenshot) setScreenshots(prev => [...prev, { data: msg.screenshot, label: msg.description, status: msg.status }]);
+        addRunLog(msg.status === "fail" ? `✗ ${msg.error}` : `✓ ${msg.description}`, msg.status === "fail" ? "error" : "success"); break;
+
       case "connected":
         addRunLog("Backend connected ✓", "success");
         refreshBadge();
@@ -62,10 +81,32 @@ export function useRunner() {
 
       case "step_done":
         setSteps(prev => prev.map((s, i) =>
-          i === msg.index ? { ...s, status: msg.status, screenshot: msg.screenshot, error: msg.error, description: msg.description } : s
+          i === msg.index ? {
+            ...s,
+            status:      msg.status,
+            screenshot:  msg.screenshot,
+            error:       msg.error,
+            attempts:    msg.attempts,
+            uncertain:   msg.uncertain,
+            observation: msg.observation,
+          } : s
         ));
         if (msg.screenshot) setScreenshots(prev => [...prev, { data: msg.screenshot, label: msg.description, status: msg.status }]);
-        addRunLog(msg.status === "fail" ? `✗ ${msg.error}` : `✓ ${msg.description}`, msg.status === "fail" ? "error" : "success"); break;
+        if (msg.uncertain)  addRunLog(`◈ ${msg.description} — uncertain but action ran`, "warn");
+        else addRunLog(msg.status === "fail" ? `✗ ${msg.error}` : `✓ ${msg.description}${msg.attempts > 1 ? ` (${msg.attempts} attempts)` : ""}`, msg.status === "fail" ? "error" : "success");
+        break;
+
+      case "step_recovered":
+        setSteps(prev => prev.map(s => s.description === msg.description
+          ? { ...s, status: "recovered", recoveryAction: msg.recoveryAction } : s));
+        addRunLog(`◈ Recovered: ${msg.description} via "${msg.recoveryAction}"`, "success");
+        break;
+
+      case "step_recheck":
+        setSteps(prev => prev.map(s => s.description === msg.description
+          ? { ...s, status: msg.actuallySucceeded ? "pass-deferred" : s.status, recheckEvidence: msg.evidence } : s));
+        addRunLog(`◈ Deferred recheck: "${msg.description}" ${msg.actuallySucceeded ? "✓ actually passed" : "✗ confirmed failed"} — ${msg.evidence}`, msg.actuallySucceeded ? "success" : "warn");
+        break;
 
       case "screenshot":
         if (msg.data) setScreenshots(prev => [...prev, { data: msg.data, label: msg.step, status: "info" }]); break;

@@ -38,23 +38,35 @@ Example sequence for clicking a button below the fold:
  * @param {{ username?: string, password?: string }} credentials
  * @returns {Promise<Array<{ type: string, selector?: string, value?: string, description: string }>>}
  */
-export async function generateActions(useCase, url, credentials = {}) {
+export async function generateActions(useCase, url, credentials = {}, pageAnalysis = null) {
   const credLine = credentials.username
     ? `\nCredentials — username: "${credentials.username}", password: "${credentials.password}"`
     : "";
 
+  // Include page analysis context if available
+  const pageContext = pageAnalysis ? `
+Page Intelligence Report:
+- Page type: ${pageAnalysis.pageType}
+- Summary: ${pageAnalysis.summary}
+- UI Patterns detected: ${pageAnalysis.uiPatterns?.map(p => `${p.type} (${p.description})`).join(", ") || "none"}
+- Forms detected: ${pageAnalysis.forms?.length || 0}
+- Testing insights: ${pageAnalysis.testingInsights || "none"}
+- Key elements: ${pageAnalysis.keyElements?.map(e => `${e.description} → ${e.action}`).join(", ") || "none"}
+` : "";
+
   const response = await client.messages.create({
     model:      config.model,
-    max_tokens: config.maxTokens,
+    max_tokens: 4000,
     system:     SYSTEM,
     messages: [{
       role:    "user",
       content: `URL: ${url}${credLine}
 Use case: ${useCase.title}
+Description: ${useCase.description || ""}
 Steps:
 ${useCase.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}
-
-Generate the Playwright actions array.`,
+${pageContext}
+Generate the complete Playwright actions array. Use the page intelligence report to generate more accurate selectors and interactions.`,
     }],
   });
 
@@ -65,7 +77,6 @@ Generate the Playwright actions array.`,
     if (start === -1 || end === -1) throw new Error("No array found");
     return JSON.parse(raw.slice(start, end + 1));
   } catch {
-    // Safe fallback — just navigate to the URL
     return [{ type: "navigate", value: url, description: `Navigate to ${url}` }];
   }
 }

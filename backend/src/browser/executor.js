@@ -2,6 +2,7 @@ import { config }          from "../config/index.js";
 import { send }            from "../ws/send.js";
 import { handlePopups }    from "./popupHandler.js";
 import { waitUntilReady, isElementReady, didActionSucceed } from "./smartObserver.js";
+import { retryWithConfirmation } from "./retryEngine.js";
 
 const T = config.browser.timeout;
 
