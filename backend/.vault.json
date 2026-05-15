@@ -1,0 +1,15 @@
+[
+  {
+    "id": "cred-92db6b75",
+    "name": "asics",
+    "environment": "prod",
+    "type": "basic",
+    "url": "https://asics.com",
+    "fields": {
+      "username": "8b53c5b7c8cdc444cda5cc54c970fef0:6915dad6d3bfc66a9d83660fb0773406:45dff2381d7445ae3053e4327ee2bb135d679b95",
+      "password": "239977bdc1f2dd51039a4fb8c1367c2a:26166ea614c0c7d21d30d2b37a185510:f2515f845b37c56a13ad"
+    },
+    "createdAt": "2026-05-14T23:58:51.650Z",
+    "updatedAt": "2026-05-14T23:59:24.101Z"
+  }
+]

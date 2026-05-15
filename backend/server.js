@@ -17,7 +17,8 @@ import {
   runAllScenariosRoute,
   getResultsRoute,
 } from "./src/routes/apiAgentRoutes.js";
-import { vaultRoutes } from "./src/vault/vaultRoutes.js";
+import { vaultRoutes }   from "./src/vault/vaultRoutes.js";
+import { resultsRoutes } from "./src/results/routes.js";
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 const app = express();
@@ -45,6 +46,9 @@ app.get( "/api/agent/results/:runId", getResultsRoute);
 
 // Vault routes
 vaultRoutes(app);
+
+// Results routes
+resultsRoutes(app);
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });

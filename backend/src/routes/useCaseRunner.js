@@ -5,6 +5,7 @@ import { captureScreenshot }  from "../browser/screenshot.js";
 import { generateActions }    from "../ai/actionGenerator.js";
 import { sessionManager }     from "../ws/sessionManager.js";
 import { send }               from "../ws/send.js";
+import { resultsStore }       from "../results/store.js";
 
 /**
  * Run a single use case end-to-end in a headless browser,
@@ -16,7 +17,8 @@ import { send }               from "../ws/send.js";
  */
 export async function runUseCase(ws, sessionId, { useCase, url, credentials }) {
   send(ws, { type: "run_start", ucId: useCase.id, title: useCase.title });
-
+  const startTime = Date.now();
+  const stepResults = [];
   let browser;
   try {
     // 1. Launch browser
@@ -56,9 +58,11 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials }) {
         await executeAction(page, action, ws);
         await page.waitForTimeout(600);
         const screenshot = await captureScreenshot(page);
+        stepResults.push({ index: i, description: action.description, status: "pass" });
         send(ws, { type: "step_done", index: i, status: "pass", screenshot, description: action.description });
       } catch (err) {
         const screenshot = await captureScreenshot(page).catch(() => null);
+        stepResults.push({ index: i, description: action.description, status: "fail", error: err.message });
         send(ws, { type: "step_done", index: i, status: "fail", screenshot, description: action.description, error: err.message });
         send(ws, { type: "log", level: "warn", msg: `Step ${i + 1} failed: ${err.message}` });
       }
@@ -74,6 +78,22 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials }) {
     const passed = assertResults.filter(a => a.passed).length;
     const failed = assertResults.filter(a => !a.passed).length;
     send(ws, { type: "run_complete", ucId: useCase.id, passed, failed, total: assertResults.length });
+
+    // 7. Persist result
+    resultsStore.save({
+      type:        "usecase",
+      name:        useCase.title,
+      url,
+      status:      failed === 0 ? "pass" : "fail",
+      passed,
+      failed,
+      total:       assertResults.length,
+      duration:    Date.now() - startTime,
+      steps:       stepResults,
+      assertions:  assertResults,
+      startedAt:   new Date(startTime).toISOString(),
+      completedAt: new Date().toISOString(),
+    });
 
   } catch (err) {
     send(ws, { type: "log",      level: "error", msg: `Fatal: ${err.message}` });

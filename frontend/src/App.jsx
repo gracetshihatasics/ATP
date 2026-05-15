@@ -7,6 +7,7 @@ import { DiscoveryView }   from "./components/discovery/DiscoveryView.jsx";
 import { RunnerView }      from "./components/runner/RunnerView.jsx";
 import { ApiAgentView }    from "./components/api/ApiAgentView.jsx";
 import { VaultView }       from "./components/vault/VaultView.jsx";
+import { ResultsView }     from "./components/results/ResultsView.jsx";
 
 export default function App() {
   const [mainView, setMainView] = useState("discovery");
@@ -32,6 +33,7 @@ export default function App() {
       {mainView === "runner"    && <RunnerView runner={runner} onBack={() => setMainView("discovery")} />}
       {mainView === "api"       && <ApiAgentView />}
       {mainView === "vault"     && <VaultView />}
+      {mainView === "results"   && <ResultsView />}
     </div>
   );
 }

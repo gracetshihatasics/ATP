@@ -6,7 +6,7 @@ export function Header({ wsStatus, onConnect, mainView, setMainView }) {
       <div style={{ display:"flex", alignItems:"center", gap:10 }}>
         <div style={{ width:7, height:7, borderRadius:"50%", background:"#4d9de0", boxShadow:"0 0 8px #4d9de0", animation:"pulse 2s infinite" }} />
         <span style={{ fontSize:12, fontWeight:600, color:"#7ec8ff", letterSpacing:"0.14em" }}>AUTONOMOUS TEST PLATFORM</span>
-        <span style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.08em" }}>v0.3</span>
+        <span style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.08em" }}>v0.4</span>
       </div>
       <div style={{ display:"flex", alignItems:"center", gap:8 }}>
         <div style={{ display:"flex", alignItems:"center", gap:5, fontSize:10, color:wc }}>
@@ -19,6 +19,7 @@ export function Header({ wsStatus, onConnect, mainView, setMainView }) {
         <button className={`nb ${mainView==="api"?"on":""}`}       onClick={() => setMainView("api")}>🔌 API Agent</button>
         <button className={`nb ${mainView==="runner"?"on":""}`}    onClick={() => setMainView("runner")}>▶ Runner</button>
         <button className={`nb ${mainView==="vault"?"on":""}`}     onClick={() => setMainView("vault")}>🔐 Vault</button>
+        <button className={`nb ${mainView==="results"?"on":""}`}   onClick={() => setMainView("results")}>📊 Results</button>
       </div>
     </div>
   );
