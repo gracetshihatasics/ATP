@@ -9,6 +9,7 @@ import { messageRouter } from "./src/ws/messageRouter.js";
 import { sessionManager } from "./src/ws/sessionManager.js";
 import { send }    from "./src/ws/send.js";
 import { discoverRoute, scenarioRoute } from "./src/routes/aiRoutes.js";
+import { advancedDiscoverRoute }        from "./src/routes/advancedDiscoveryRoute.js";
 import {
   importSpecRoute,
   buildScenariosRoute,
@@ -31,8 +32,9 @@ app.get("/health", (_, res) =>
 );
 
 // AI routes — proxied from frontend to avoid CORS
-app.post("/api/discover",  discoverRoute);
-app.post("/api/scenario",  scenarioRoute);
+app.post("/api/discover",          discoverRoute);
+app.post("/api/discover/advanced", advancedDiscoverRoute);
+app.post("/api/scenario",          scenarioRoute);
 
 // API Agent routes
 app.post("/api/agent/import",         importSpecRoute);

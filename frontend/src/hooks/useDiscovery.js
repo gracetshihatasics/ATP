@@ -90,7 +90,7 @@ export function useDiscovery() {
   return {
     url, setUrl,
     credentialId, credentialEntry, onCredentialChange,
-    phase, log, logRef, plan, discover, cancelDiscovery,
+    phase, log, logRef, plan, setPlan, discover, cancelDiscovery,
     selectedUC, scenario, scenLoading, generateScenario: generateScenarioForUC,
     filterPriority, setFilterPriority, filterCategory, setFilterCategory,
     filteredUCs, categories, savedSuite, toggleSuite,
