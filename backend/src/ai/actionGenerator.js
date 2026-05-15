@@ -6,11 +6,14 @@ const client = new Anthropic({ apiKey: config.apiKey });
 const SYSTEM = `You are a Playwright automation expert. Convert use case steps into precise browser actions.
 Return ONLY a raw JSON array. No markdown. No explanation. Start with [ end with ].
 Each element: { "type": "navigate|click|fill|select|wait|scroll|press|hover|assert_text|assert_visible", "selector": "css or text locator", "value": "string if needed", "description": "human-readable label" }
-Selector guidelines:
-  - Prefer text locators: button:has-text("Add to Cart"), a:has-text("Sign In")
-  - Use semantic attrs: [data-testid="..."], [aria-label="..."], [role="..."]
-  - Fall back to: input[name="email"], input[type="password"], input[placeholder="Search"]
-  - Avoid: .class-names, div > span (fragile)`;
+
+CRITICAL RULES:
+- For "navigate" actions, "value" MUST be the full URL string (e.g. "https://asics.com"). Never leave value empty for navigate.
+- Always start with a navigate action to the base URL.
+- Prefer text locators: button:has-text("Add to Cart"), a:has-text("Sign In")
+- Use semantic attrs: [data-testid="..."], [aria-label="..."], [role="..."]
+- Fall back to: input[name="email"], input[type="password"], input[placeholder="Search"]
+- Avoid: .class-names, div > span (fragile)`;
 
 /**
  * Ask Claude to translate use-case steps into a list of Playwright action objects.
