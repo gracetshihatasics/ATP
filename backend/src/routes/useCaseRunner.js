@@ -6,6 +6,7 @@ import { generateActions }    from "../ai/actionGenerator.js";
 import { sessionManager }     from "../ws/sessionManager.js";
 import { send }               from "../ws/send.js";
 import { resultsStore }       from "../results/store.js";
+import { waitUntilReady }     from "../browser/smartObserver.js";
 
 export async function runUseCase(ws, sessionId, { useCase, url, credentials, suiteId = null }) {
   send(ws, { type: "run_start", ucId: useCase.id, title: useCase.title });
@@ -42,9 +43,12 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
       send(ws, { type: "step_start", index: i, total: actions.length, description: action.description });
       try {
         await executeAction(page, action, ws);
-        // Wait for page to stabilise after each action
-        await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-        await page.waitForTimeout(800);
+        // Smart observe: wait until page is actually ready before screenshot + next step
+        await waitUntilReady(page, {
+          maxWait:   10_000,
+          pollMs:    400,
+          onLog:     (msg) => send(ws, { type: "log", level: "info", msg }),
+        });
         const screenshot = await captureScreenshot(page);
         stepResults.push({ index: i, description: action.description, status: "pass" });
         send(ws, { type: "step_done", index: i, status: "pass", screenshot, description: action.description });
