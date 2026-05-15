@@ -19,7 +19,9 @@ export async function mapFeatures(url, surfaceResult, authContext, onEvent = () 
   let browser;
 
   try {
-    const { browser: b, page } = await launchBrowser();
+    const { browser: b, page } = await launchBrowser(
+      (msg) => onEvent({ type: "log", msg: `🚫 ${msg}`, level: "info" })
+    );
     browser = b;
 
     // Inject auth cookies if we have them

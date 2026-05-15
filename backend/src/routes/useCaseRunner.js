@@ -21,7 +21,9 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials }) {
   try {
     // 1. Launch browser
     send(ws, { type: "log", level: "system", msg: "Launching browser..." });
-    const { browser: b, page } = await launchBrowser();
+    const { browser: b, page } = await launchBrowser(
+      (msg) => send(ws, { type: "log", level: "info", msg: `🚫 ${msg}` })
+    );
     browser = b;
 
     page.on("pageerror", err =>

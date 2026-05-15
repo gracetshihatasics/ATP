@@ -1,12 +1,13 @@
 import { chromium } from "playwright";
 import { config }   from "../config/index.js";
+import { attachPopupHandler } from "./popupHandler.js";
 
 /**
  * Launch a Chromium instance with stealth headers to avoid bot detection.
  * Many sites (ASICS, Nike, etc.) use Akamai/Cloudflare which block headless browsers.
  * These settings make the browser look more like a real user.
  */
-export async function launchBrowser() {
+export async function launchBrowser(onDismiss = () => {}) {
   const browser = await chromium.launch({
     headless: config.browser.headless,
     args: [
@@ -46,6 +47,9 @@ export async function launchBrowser() {
     Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
     window.chrome = { runtime: {} };
   });
+
+  // Attach universal popup handler — dismisses cookie banners, modals, alerts
+  await attachPopupHandler(page, onDismiss);
 
   return { browser, page };
 }

@@ -1,22 +1,26 @@
 import { config } from "../config/index.js";
 import { send } from "../ws/send.js";
+import { handlePopups } from "./popupHandler.js";
 
 const { action: T } = config.browser.timeout;
 
 export async function executeAction(page, action, ws) {
   send(ws, { type: "log", level: "action", msg: `${action.type.toUpperCase()}: ${action.description}` });
 
+  const onDismiss = (msg) => send(ws, { type: "log", level: "info", msg });
+
   switch (action.type) {
+
     case "navigate": {
       const url = action.value || action.url;
       if (!url || typeof url !== "string") {
-        send(ws, { type: "log", level: "warn", msg: `Navigate skipped — no URL provided in action` });
+        send(ws, { type: "log", level: "warn", msg: `Navigate skipped — no URL provided` });
         break;
       }
       try {
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: config.browser.timeout.navigation });
+        await handlePopups(page, onDismiss);
       } catch (err) {
-        // Some sites block headless — try with a shorter timeout and continue
         send(ws, { type: "log", level: "warn", msg: `Navigation warning: ${err.message.slice(0, 80)}` });
       }
       break;
@@ -24,6 +28,7 @@ export async function executeAction(page, action, ws) {
 
     case "click":
       await page.locator(action.selector).first().click({ timeout: T });
+      await handlePopups(page, onDismiss);
       break;
 
     case "fill":
@@ -36,6 +41,7 @@ export async function executeAction(page, action, ws) {
 
     case "press":
       await page.keyboard.press(action.value ?? "Enter");
+      await handlePopups(page, onDismiss);
       break;
 
     case "wait":
@@ -62,4 +68,3 @@ export async function executeAction(page, action, ws) {
       send(ws, { type: "log", level: "warn", msg: `Skipping unknown action type: "${action.type}"` });
   }
 }
-

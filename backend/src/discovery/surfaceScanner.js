@@ -1,5 +1,6 @@
 import { launchBrowser }     from "../browser/launcher.js";
 import { captureScreenshot } from "../browser/screenshot.js";
+import { handlePopups }      from "../browser/popupHandler.js";
 
 /**
  * Phase 1: Surface scan — no auth required.
@@ -15,7 +16,9 @@ export async function surfaceScan(url, onEvent = () => {}) {
 
   let browser;
   try {
-    const { browser: b, page } = await launchBrowser();
+    const { browser: b, page } = await launchBrowser(
+      (msg) => onEvent({ type: "log", msg: `🚫 ${msg}`, level: "info" })
+    );
     browser = b;
 
     // Navigate to the URL
@@ -23,6 +26,7 @@ export async function surfaceScan(url, onEvent = () => {}) {
     await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 }).catch(() =>
       page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })
     );
+    await handlePopups(page, (msg) => onEvent({ type: "log", msg, level: "info" }));
 
     const screenshot = await captureScreenshot(page);
     onEvent({ type: "screenshot", data: screenshot, label: "Homepage" });
@@ -187,6 +191,7 @@ async function mapNavPages(page, baseUrl, navLinks, onEvent) {
     try {
       onEvent({ type: "log", msg: `  Scanning: ${link.text}`, level: "info" });
       await page.goto(link.href, { waitUntil: "domcontentloaded", timeout: 15_000 });
+      await handlePopups(page, (msg) => onEvent({ type: "log", msg, level: "info" }));
       await page.waitForTimeout(800);
 
       const screenshot = await captureScreenshot(page);
