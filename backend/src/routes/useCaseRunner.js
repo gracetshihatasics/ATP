@@ -42,7 +42,9 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
       send(ws, { type: "step_start", index: i, total: actions.length, description: action.description });
       try {
         await executeAction(page, action, ws);
-        await page.waitForTimeout(600);
+        // Wait for page to stabilise after each action
+        await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(800);
         const screenshot = await captureScreenshot(page);
         stepResults.push({ index: i, description: action.description, status: "pass" });
         send(ws, { type: "step_done", index: i, status: "pass", screenshot, description: action.description });

@@ -192,7 +192,9 @@ async function mapNavPages(page, baseUrl, navLinks, onEvent) {
       onEvent({ type: "log", msg: `  Scanning: ${link.text}`, level: "info" });
       await page.goto(link.href, { waitUntil: "domcontentloaded", timeout: 15_000 });
       await handlePopups(page, (msg) => onEvent({ type: "log", msg, level: "info" }));
-      await page.waitForTimeout(800);
+      // Wait for page to fully render including lazy-loaded content
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(1200);
 
       const screenshot = await captureScreenshot(page);
       const content = await page.evaluate(() => ({
