@@ -1,17 +1,21 @@
 import { useState, useRef, useCallback } from "react";
 import { createWSConnection, wsSend } from "../services/websocket.js";
+import { getSummary } from "../services/results.js";
 
 export function useRunner() {
-  const [wsStatus, setWsStatus]           = useState("disconnected");
-  const [runLog, setRunLog]               = useState([]);
-  const [runPhase, setRunPhase]           = useState("idle");
-  const [steps, setSteps]                 = useState([]);
-  const [currentStep, setCurrentStep]     = useState(-1);
-  const [screenshots, setScreenshots]     = useState([]);
-  const [viewShot, setViewShot]           = useState(null);
-  const [assertions, setAssertions]       = useState([]);
+  const [wsStatus, setWsStatus]         = useState("disconnected");
+  const [runLog, setRunLog]             = useState([]);
+  const [runPhase, setRunPhase]         = useState("idle");
+  const [steps, setSteps]               = useState([]);
+  const [currentStep, setCurrentStep]   = useState(-1);
+  const [screenshots, setScreenshots]   = useState([]);
+  const [viewShot, setViewShot]         = useState(null);
+  const [assertions, setAssertions]     = useState([]);
   const [suiteProgress, setSuiteProgress] = useState(null);
-  const [runTarget, setRunTarget]         = useState(null);
+  const [runTarget, setRunTarget]       = useState(null);
+  const [lastRunId, setLastRunId]       = useState(null);   // ← connection 4: run ID
+  const [resultsBadge, setResultsBadge] = useState(0);     // ← connection 3: failure badge
+  const [onRunComplete, setOnRunComplete] = useState(null); // ← connection 1: notify Results
 
   const wsRef    = useRef(null);
   const runLogRef = useRef(null);
@@ -21,14 +25,25 @@ export function useRunner() {
     setTimeout(() => runLogRef.current?.scrollTo({ top: 99999, behavior: "smooth" }), 50);
   }, []);
 
+  // Refresh failure badge from results store
+  const refreshBadge = useCallback(async () => {
+    try {
+      const summary = await getSummary();
+      setResultsBadge(summary.failed ?? 0);
+    } catch {}
+  }, []);
+
   const handleMessage = useCallback((msg) => {
     switch (msg.type) {
       case "connected":
-        addRunLog("Backend connected ✓", "success"); break;
+        addRunLog("Backend connected ✓", "success");
+        refreshBadge();
+        break;
 
       case "run_start":
         setRunPhase("running"); setSteps([]); setAssertions([]);
         setScreenshots([]); setCurrentStep(-1); setRunTarget(msg);
+        setLastRunId(null);
         addRunLog(`Starting: ${msg.title}`, "system"); break;
 
       case "log":
@@ -61,7 +76,13 @@ export function useRunner() {
 
       case "run_complete":
         setRunPhase("done");
-        addRunLog(`Run complete — ${msg.passed} passed, ${msg.failed} failed`, msg.failed === 0 ? "success" : "warn"); break;
+        if (msg.runId) setLastRunId(msg.runId);
+        addRunLog(`Run complete — ${msg.passed} passed, ${msg.failed} failed`, msg.failed === 0 ? "success" : "warn");
+        addRunLog(`📊 Result saved → view in Results tab`, "system");
+        // Connection 1: notify Results tab to refresh
+        refreshBadge();
+        setOnRunComplete(prev => prev ? prev + 1 : 1);
+        break;
 
       case "run_error":
         setRunPhase("error"); addRunLog(`Error: ${msg.error}`, "error"); break;
@@ -71,24 +92,27 @@ export function useRunner() {
 
       case "suite_complete":
         setSuiteProgress(prev => prev ? { ...prev, done: msg.ran.length } : null);
-        addRunLog(`Suite complete — ${msg.ran.length} use cases ran`, "success"); break;
+        addRunLog(`Suite complete — ${msg.ran.length} use cases ran`, "success");
+        refreshBadge();
+        setOnRunComplete(prev => prev ? prev + 1 : 1);
+        break;
 
       case "stopped":
         setRunPhase("idle"); addRunLog("Stopped.", "system"); break;
     }
     setTimeout(() => runLogRef.current?.scrollTo({ top: 99999, behavior: "smooth" }), 50);
-  }, [addRunLog]);
+  }, [addRunLog, refreshBadge]);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
     setWsStatus("connecting");
     wsRef.current = createWSConnection({
-      onOpen:    () => setWsStatus("connected"),
+      onOpen:    () => { setWsStatus("connected"); refreshBadge(); },
       onClose:   () => { setWsStatus("disconnected"); wsRef.current = null; },
       onError:   () => setWsStatus("error"),
       onMessage: handleMessage,
     });
-  }, [handleMessage]);
+  }, [handleMessage, refreshBadge]);
 
   const send = useCallback((payload) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -106,14 +130,12 @@ export function useRunner() {
     send({ type: "run_suite", useCases, url, credentials });
   }, [send]);
 
-  const stopRun = useCallback(() => {
-    send({ type: "stop" });
-  }, [send]);
+  const stopRun  = useCallback(() => send({ type: "stop" }), [send]);
 
   const resetRunner = useCallback(() => {
     setRunLog([]); setSteps([]); setScreenshots([]);
     setAssertions([]); setRunPhase("idle"); setCurrentStep(-1);
-    setSuiteProgress(null); setRunTarget(null);
+    setSuiteProgress(null); setRunTarget(null); setLastRunId(null);
   }, []);
 
   return {
@@ -122,6 +144,9 @@ export function useRunner() {
     runPhase, steps, currentStep,
     screenshots, viewShot, setViewShot,
     assertions, suiteProgress, runTarget,
+    lastRunId,        // ← connection 4
+    resultsBadge,     // ← connection 3
+    onRunComplete,    // ← connection 1
     runUseCase, runSuite, stopRun, resetRunner,
   };
 }

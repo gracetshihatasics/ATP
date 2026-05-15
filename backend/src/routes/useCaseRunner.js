@@ -80,7 +80,7 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials }) {
     send(ws, { type: "run_complete", ucId: useCase.id, passed, failed, total: assertResults.length });
 
     // 7. Persist result
-    resultsStore.save({
+    const saved = resultsStore.save({
       type:        "usecase",
       name:        useCase.title,
       url,
@@ -94,6 +94,7 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials }) {
       startedAt:   new Date(startTime).toISOString(),
       completedAt: new Date().toISOString(),
     });
+    send(ws, { type: "run_complete", ucId: useCase.id, passed, failed, total: assertResults.length, runId: saved.id });
 
   } catch (err) {
     send(ws, { type: "log",      level: "error", msg: `Fatal: ${err.message}` });
