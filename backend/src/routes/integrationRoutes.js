@@ -1,5 +1,6 @@
 import { integrationStore } from "../integrations/integrationStore.js";
 import { syncIntegration, buildContext, extractTestData } from "../integrations/contextBuilder.js";
+import { validateTestAgainstContext } from "../integrations/testContextValidator.js";
 
 export function integrationRoutes(app) {
 
@@ -69,6 +70,18 @@ export function integrationRoutes(app) {
       const ctx    = await buildContext(url || "");
       const result = await extractTestData(ctx, useCase);
       res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ── Validate a failing test against current context ───────────────────────
+  app.post("/api/integrations/validate-test", async (req, res) => {
+    const { run } = req.body;
+    if (!run) return res.status(400).json({ error: "run required" });
+    try {
+      const result = await validateTestAgainstContext(run);
+      res.json({ ok: true, validation: result });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

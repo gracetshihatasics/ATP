@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   getResults, getSummary, getTrend, deleteRun, clearAll,
-  exportJUnitURL, exportSummaryURL, analyseRun, analyseSuiteRuns,
+  exportJUnitURL, exportSummaryURL, analyseRun, analyseSuiteRuns, validateTest,
 } from "../../services/results.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -41,6 +41,8 @@ export function ResultsView({ onRunComplete, onRerun }) {
   const [analysis, setAnalysis] = useState(null);
   const [analysing, setAnalysing] = useState(false);
   const [suiteInsight, setSuiteInsight] = useState(null);
+  const [validation, setValidation] = useState(null);
+  const [validating, setValidating] = useState(false);
   const [audience, setAudience] = useState("engineering");
   const [view, setView]         = useState("dashboard"); // dashboard | list | detail | export
   const [filterStatus, setFilterStatus] = useState("all");
@@ -78,9 +80,17 @@ export function ResultsView({ onRunComplete, onRerun }) {
   }, [liveMode, load]);
 
   const handleSelect = async (run) => {
-    setSelected(run); setAnalysis(null); setSuiteInsight(null); setView("detail");
+    setSelected(run); setAnalysis(null); setSuiteInsight(null); setValidation(null);
+    setView("detail");
     const t = await getTrend(run.name).catch(() => []);
     setTrend(t);
+  };
+
+  const handleValidate = async () => {
+    if (!selected) return;
+    setValidating(true); setValidation(null);
+    try { setValidation(await validateTest(selected)); } catch {}
+    setValidating(false);
   };
 
   const handleAnalyse = async () => {
@@ -525,6 +535,7 @@ export function ResultsView({ onRunComplete, onRerun }) {
           <div style={{ padding:"20px 24px" }}>
             <RunDetail run={selected} trend={trend} analysis={analysis} analysing={analysing}
               suiteInsight={suiteInsight} onAnalyse={handleAnalyse} onSuiteInsight={handleSuiteInsight}
+              validation={validation} validating={validating} onValidate={handleValidate}
               onDelete={handleDelete} onRerun={onRerun} onBack={() => setView("dashboard")} />
           </div>
         )}
@@ -555,7 +566,7 @@ export function ResultsView({ onRunComplete, onRerun }) {
 }
 
 // ── Run Detail ────────────────────────────────────────────────────────────────
-function RunDetail({ run, trend, analysis, analysing, suiteInsight, onAnalyse, onSuiteInsight, onDelete, onRerun, onBack }) {
+function RunDetail({ run, trend, analysis, analysing, suiteInsight, onAnalyse, onSuiteInsight, validation, validating, onValidate, onDelete, onRerun, onBack }) {
   const sc = S[run.status] ?? S.error;
   return (
     <div className="fi">
@@ -587,12 +598,56 @@ function RunDetail({ run, trend, analysis, analysing, suiteInsight, onAnalyse, o
           </div>
         </div>
         {run.status!=="pass" && (
-          <button onClick={run.type==="suite"?onSuiteInsight:onAnalyse} disabled={analysing}
-            style={{ background:"linear-gradient(135deg,#1a0a2e,#0a0a1e)", border:"0.5px solid #c8a0f0", borderRadius:5, color:analysing?"#4a7fa5":"#c8a0f0", cursor:analysing?"default":"pointer", fontSize:10, fontWeight:600, padding:"7px 14px", fontFamily:"inherit", letterSpacing:"0.06em" }}>
-            {analysing?"◈ Analysing...":"◈ AI Analyse Failure"}
-          </button>
+          <div style={{ display:"flex", gap:6 }}>
+            <button onClick={run.type==="suite"?onSuiteInsight:onAnalyse} disabled={analysing}
+              style={{ background:"linear-gradient(135deg,#1a0a2e,#0a0a1e)", border:"0.5px solid #c8a0f0", borderRadius:5, color:analysing?"#4a7fa5":"#c8a0f0", cursor:analysing?"default":"pointer", fontSize:10, fontWeight:600, padding:"7px 12px", fontFamily:"inherit", letterSpacing:"0.06em" }}>
+              {analysing?"◈ Analysing...":"◈ AI Analyse"}
+            </button>
+            <button onClick={onValidate} disabled={validating}
+              style={{ background:"linear-gradient(135deg,#001a10,#000a08)", border:"0.5px solid #4caf50", borderRadius:5, color:validating?"#4a7fa5":"#7ec87f", cursor:validating?"default":"pointer", fontSize:10, fontWeight:600, padding:"7px 12px", fontFamily:"inherit", letterSpacing:"0.06em" }}>
+              {validating?"◈ Validating...":"🔍 Validate vs Context"}
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Context Validation */}
+      {validation && (
+        <div style={{ border:`0.5px solid ${validation.testStillValid?"#4caf50":"#ff8c00"}`, borderRadius:8, padding:"14px 16px", marginBottom:16, background: validation.testStillValid?"#0a1a0a":"#1a0f00" }} className="fi">
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+            <span style={{ fontSize:12 }}>🔍</span>
+            <div style={{ fontSize:11, fontWeight:600, color: validation.testStillValid?"#7ec87f":"#ffaa44" }}>
+              Context Validation — {validation.testStillValid ? "Test is Current" : "Test May Be Stale"}
+            </div>
+            <span className="pill" style={{ background:"#0d1520", border:`0.5px solid ${SEV_COLORS[validation.priority]?.border||"#1e3a5f"}`, color:SEV_COLORS[validation.priority]?.text||"#4a7fa5" }}>{validation.priority}</span>
+            <span className="pill" style={{ background:"#0d1520", border:"0.5px solid #1e3a5f", color:"#4a7fa5" }}>{validation.verdict?.replace(/-/g," ")}</span>
+            <span className="pill" style={{ background:"#0d1520", border:"0.5px solid #1e3a5f", color:"#2d6aad" }}>{validation.confidence} confidence</span>
+          </div>
+          <div style={{ fontSize:11, color:"#a0c0a0", lineHeight:1.7, marginBottom:8 }}>{validation.explanation}</div>
+          {validation.contextMismatch && (
+            <div style={{ fontSize:10, color:"#f0c040", marginBottom:8 }}>
+              ⚠ Context mismatch: {validation.contextMismatch}
+            </div>
+          )}
+          {validation.suggestedTestFix && (
+            <div style={{ background:"#0a1520", borderRadius:5, padding:"8px 10px", marginBottom:8 }}>
+              <div style={{ fontSize:9, color:"#2d6aad", marginBottom:3, textTransform:"uppercase", letterSpacing:"0.06em" }}>Fix the test</div>
+              <div style={{ fontSize:11, color:"#a0d0f0" }}>{validation.suggestedTestFix}</div>
+            </div>
+          )}
+          {validation.suggestedAppFix && (
+            <div style={{ background:"#1a0808", borderRadius:5, padding:"8px 10px", marginBottom:8 }}>
+              <div style={{ fontSize:9, color:"#ff3b3b", marginBottom:3, textTransform:"uppercase", letterSpacing:"0.06em" }}>Fix the app</div>
+              <div style={{ fontSize:11, color:"#ffaaaa" }}>{validation.suggestedAppFix}</div>
+            </div>
+          )}
+          {validation.shouldSkip && (
+            <div style={{ fontSize:10, color:"#4d9de0", background:"#0a1520", borderRadius:4, padding:"5px 8px" }}>
+              ⏭ Suggested: skip this test — {validation.skipReason}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* AI Analysis */}
       {(analysis||suiteInsight) && (

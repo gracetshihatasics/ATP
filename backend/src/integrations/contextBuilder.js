@@ -6,6 +6,10 @@ import { jiraConnector, jiraToContext }             from "./connectors/jiraConne
 import { dbConnector, dbToContext }                 from "./connectors/dbConnector.js";
 import { notionConnector, notionToContext }         from "./connectors/notionConnector.js";
 import { restConnector, restToContext }             from "./connectors/restConnector.js";
+import { githubConnector, githubToContext }         from "./connectors/githubConnector.js";
+import { postmanConnector, postmanToContext }       from "./connectors/postmanConnector.js";
+import { swaggerConnector, swaggerToContext }       from "./connectors/swaggerConnector.js";
+import { miroConnector, miroToContext }             from "./connectors/miroConnector.js";
 
 const client    = new Anthropic({ apiKey: config.apiKey });
 const cache     = new Map(); // simple in-memory cache per integration
@@ -28,6 +32,10 @@ export async function syncIntegration(integrationId) {
     case "mongodb":    result = await dbConnector({ ...integration.config, type: integration.type }); break;
     case "notion":     result = await notionConnector(integration.config);     break;
     case "rest":       result = await restConnector(integration.config);       break;
+    case "github":     result = await githubConnector(integration.config);     break;
+    case "postman":    result = await postmanConnector(integration.config);    break;
+    case "swagger":    result = await swaggerConnector(integration.config);    break;
+    case "miro":       result = await miroConnector(integration.config);       break;
     default: throw new Error(`Unknown integration type: ${integration.type}`);
   }
 
@@ -69,6 +77,10 @@ export async function buildContext(url = "", goal = "") {
           case "mongodb":    text = dbToContext(data);         break;
           case "notion":     text = notionToContext(data);     break;
           case "rest":       text = restToContext(data);       break;
+          case "github":     text = githubToContext(data);     break;
+          case "postman":    text = postmanToContext(data);    break;
+          case "swagger":    text = swaggerToContext(data);    break;
+          case "miro":       text = miroToContext(data);       break;
         }
         if (text) sections.push({ type: int.type, name: int.name, text, data });
       } catch (err) {

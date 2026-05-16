@@ -1,31 +1,33 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { createWSConnection, wsSend } from "../services/websocket.js";
 import { getSummary } from "../services/results.js";
 
-export function useRunner() {
-  const [wsStatus, setWsStatus]         = useState("disconnected");
-  const [runLog, setRunLog]             = useState([]);
-  const [runPhase, setRunPhase]         = useState("idle");
-  const [steps, setSteps]               = useState([]);
-  const [currentStep, setCurrentStep]   = useState(-1);
-  const [screenshots, setScreenshots]   = useState([]);
-  const [viewShot, setViewShot]         = useState(null);
-  const [assertions, setAssertions]     = useState([]);
-  const [suiteProgress, setSuiteProgress] = useState(null);
-  const [runTarget, setRunTarget]       = useState(null);
-  const [lastRunId, setLastRunId]       = useState(null);   // ← connection 4: run ID
-  const [resultsBadge, setResultsBadge] = useState(0);     // ← connection 3: failure badge
-  const [onRunComplete, setOnRunComplete] = useState(null); // ← connection 1: notify Results
+const BACKEND_HTTP = "http://localhost:3579";
 
-  const wsRef    = useRef(null);
-  const runLogRef = useRef(null);
+export function useRunner() {
+  const [wsStatus, setWsStatus]           = useState("disconnected");
+  const [runLog, setRunLog]               = useState([]);
+  const [runPhase, setRunPhase]           = useState("idle");
+  const [steps, setSteps]                 = useState([]);
+  const [currentStep, setCurrentStep]     = useState(-1);
+  const [screenshots, setScreenshots]     = useState([]);
+  const [viewShot, setViewShot]           = useState(null);
+  const [assertions, setAssertions]       = useState([]);
+  const [suiteProgress, setSuiteProgress] = useState(null);
+  const [runTarget, setRunTarget]         = useState(null);
+  const [lastRunId, setLastRunId]         = useState(null);
+  const [resultsBadge, setResultsBadge]   = useState(0);
+  const [onRunComplete, setOnRunComplete] = useState(null);
+
+  const wsRef      = useRef(null);
+  const runLogRef  = useRef(null);
+  const retryTimer = useRef(null);
 
   const addRunLog = useCallback((msg, level = "info") => {
     setRunLog(prev => [...prev, { msg, level }]);
     setTimeout(() => runLogRef.current?.scrollTo({ top: 99999, behavior: "smooth" }), 50);
   }, []);
 
-  // Refresh failure badge from results store
   const refreshBadge = useCallback(async () => {
     try {
       const summary = await getSummary();
@@ -33,145 +35,158 @@ export function useRunner() {
     } catch {}
   }, []);
 
+  // ── Message handler ────────────────────────────────────────────────────────
   const handleMessage = useCallback((msg) => {
     switch (msg.type) {
       case "page_analysis":
         addRunLog(`◈ Page: ${msg.analysis?.pageType} — ${msg.analysis?.summary}`, "ai");
         if (msg.analysis?.testingInsights) addRunLog(`◈ ${msg.analysis.testingInsights}`, "ai");
         break;
-
       case "form_analysis":
-        addRunLog(`◈ Form: ${msg.analysis?.formPurpose} — ${msg.analysis?.fields?.length} fields${msg.analysis?.isMultiStep ? ` (${msg.analysis?.totalSteps} steps)` : ""}`, "ai");
+        addRunLog(`◈ Form: ${msg.analysis?.formPurpose} — ${msg.analysis?.fields?.length} fields`, "ai");
         break;
-
       case "adaptive_step_start":
         setCurrentStep(msg.index);
-        setSteps(prev => prev.map((s, i) => i === msg.index ? { ...s, status: "running", description: msg.description } : s));
-        addRunLog(`Step ${msg.index + 1}/${msg.total}: ${msg.description}`, "action"); break;
-
+        setSteps(prev => prev.map((s,i) => i===msg.index ? { ...s, status:"running", description:msg.description } : s));
+        addRunLog(`Step ${msg.index+1}/${msg.total}: ${msg.description}`, "action");
+        break;
       case "adaptive_step_done":
-        setSteps(prev => prev.map((s, i) => i === msg.index ? { ...s, status: msg.status, screenshot: msg.screenshot, error: msg.error } : s));
-        if (msg.screenshot) setScreenshots(prev => [...prev, { data: msg.screenshot, label: msg.description, status: msg.status }]);
-        addRunLog(msg.status === "fail" ? `✗ ${msg.error}` : `✓ ${msg.description}`, msg.status === "fail" ? "error" : "success"); break;
-
+        setSteps(prev => prev.map((s,i) => i===msg.index ? { ...s, status:msg.status, screenshot:msg.screenshot, error:msg.error } : s));
+        if (msg.screenshot) setScreenshots(prev => [...prev, { data:msg.screenshot, label:msg.description, status:msg.status }]);
+        addRunLog(msg.status==="fail" ? `✗ ${msg.error}` : `✓ ${msg.description}`, msg.status==="fail"?"error":"success");
+        break;
       case "connected":
         addRunLog("Backend connected ✓", "success");
         refreshBadge();
         break;
-
       case "run_start":
         setRunPhase("running"); setSteps([]); setAssertions([]);
         setScreenshots([]); setCurrentStep(-1); setRunTarget(msg);
         setLastRunId(null);
-        addRunLog(`Starting: ${msg.title}`, "system"); break;
-
+        addRunLog(`Starting: ${msg.title}`, "system");
+        break;
       case "log":
-        addRunLog(msg.msg, msg.level); break;
-
+        addRunLog(msg.msg, msg.level);
+        break;
       case "actions_ready":
         addRunLog(`${msg.count} actions generated by AI`, "ai");
-        setSteps(Array(msg.count).fill(null).map((_, i) => ({ index: i, status: "pending", description: "" }))); break;
-
+        setSteps(Array(msg.count).fill(null).map((_,i) => ({ index:i, status:"pending", description:"" })));
+        break;
       case "step_start":
         setCurrentStep(msg.index);
-        setSteps(prev => prev.map((s, i) =>
-          i === msg.index ? { ...s, status: "running", description: msg.description } : s
-        ));
-        addRunLog(`Step ${msg.index + 1}/${msg.total}: ${msg.description}`, "action"); break;
-
-      case "step_done":
-        setSteps(prev => prev.map((s, i) =>
-          i === msg.index ? {
-            ...s,
-            status:      msg.status,
-            screenshot:  msg.screenshot,
-            error:       msg.error,
-            attempts:    msg.attempts,
-            uncertain:   msg.uncertain,
-            observation: msg.observation,
-          } : s
-        ));
-        if (msg.screenshot) setScreenshots(prev => [...prev, { data: msg.screenshot, label: msg.description, status: msg.status }]);
-        if (msg.uncertain)  addRunLog(`◈ ${msg.description} — uncertain but action ran`, "warn");
-        else addRunLog(msg.status === "fail" ? `✗ ${msg.error}` : `✓ ${msg.description}${msg.attempts > 1 ? ` (${msg.attempts} attempts)` : ""}`, msg.status === "fail" ? "error" : "success");
+        setSteps(prev => prev.map((s,i) => i===msg.index ? { ...s, status:"running", description:msg.description } : s));
+        addRunLog(`Step ${msg.index+1}/${msg.total}: ${msg.description}`, "action");
         break;
-
+      case "step_done":
+        setSteps(prev => prev.map((s,i) => i===msg.index ? {
+          ...s, status:msg.status, screenshot:msg.screenshot, error:msg.error,
+          attempts:msg.attempts, uncertain:msg.uncertain, observation:msg.observation,
+        } : s));
+        if (msg.screenshot) setScreenshots(prev => [...prev, { data:msg.screenshot, label:msg.description, status:msg.status }]);
+        if (msg.uncertain)  addRunLog(`◈ ${msg.description} — uncertain but action ran`, "warn");
+        else addRunLog(
+          msg.status==="fail" ? `✗ ${msg.error}` : `✓ ${msg.description}${msg.attempts>1?` (${msg.attempts} attempts)`:""}`,
+          msg.status==="fail" ? "error" : "success"
+        );
+        break;
       case "step_recovered":
-        setSteps(prev => prev.map(s => s.description === msg.description
-          ? { ...s, status: "recovered", recoveryAction: msg.recoveryAction } : s));
+        setSteps(prev => prev.map(s => s.description===msg.description ? { ...s, status:"recovered", recoveryAction:msg.recoveryAction } : s));
         addRunLog(`◈ Recovered: ${msg.description} via "${msg.recoveryAction}"`, "success");
         break;
-
       case "step_recheck":
-        setSteps(prev => prev.map(s => s.description === msg.description
-          ? { ...s, status: msg.actuallySucceeded ? "pass-deferred" : s.status, recheckEvidence: msg.evidence } : s));
-        addRunLog(`◈ Deferred recheck: "${msg.description}" ${msg.actuallySucceeded ? "✓ actually passed" : "✗ confirmed failed"} — ${msg.evidence}`, msg.actuallySucceeded ? "success" : "warn");
+        setSteps(prev => prev.map(s => s.description===msg.description ? {
+          ...s, status:msg.actuallySucceeded?"pass-deferred":s.status, recheckEvidence:msg.evidence
+        } : s));
+        addRunLog(`◈ Recheck: "${msg.description}" ${msg.actuallySucceeded?"✓ passed":"✗ confirmed failed"} — ${msg.evidence}`, msg.actuallySucceeded?"success":"warn");
         break;
-
       case "screenshot":
-        if (msg.data) setScreenshots(prev => [...prev, { data: msg.data, label: msg.step, status: "info" }]); break;
-
+        if (msg.data) setScreenshots(prev => [...prev, { data:msg.data, label:msg.step, status:"info" }]);
+        break;
       case "assertion":
         setAssertions(prev => [...prev, msg]);
-        addRunLog(`${msg.passed ? "✓" : "✗"} Assert: ${msg.assertion}`, msg.passed ? "success" : "warn"); break;
-
+        addRunLog(`${msg.passed?"✓":"✗"} Assert: ${msg.assertion}`, msg.passed?"success":"warn");
+        break;
       case "run_complete":
         setRunPhase("done");
         if (msg.runId) setLastRunId(msg.runId);
-        addRunLog(`Run complete — ${msg.passed} passed, ${msg.failed} failed`, msg.failed === 0 ? "success" : "warn");
+        addRunLog(`Run complete — ${msg.passed} passed, ${msg.failed} failed`, msg.failed===0?"success":"warn");
         addRunLog(`📊 Result saved → view in Results tab`, "system");
-        // Connection 1: notify Results tab to refresh
         refreshBadge();
-        setOnRunComplete(prev => prev ? prev + 1 : 1);
+        setOnRunComplete(prev => (prev||0) + 1);
         break;
-
       case "run_error":
-        setRunPhase("error"); addRunLog(`Error: ${msg.error}`, "error"); break;
-
-      case "suite_start":
-        setSuiteProgress({ total: msg.total, done: 0 }); break;
-
-      case "suite_complete":
-        setSuiteProgress(prev => prev ? { ...prev, done: msg.ran.length } : null);
-        addRunLog(`Suite complete — ${msg.ran.length} use cases ran`, "success");
-        refreshBadge();
-        setOnRunComplete(prev => prev ? prev + 1 : 1);
+        setRunPhase("error"); addRunLog(`Error: ${msg.error}`, "error");
         break;
-
+      case "suite_start":
+        setSuiteProgress({ total:msg.total, done:0 });
+        break;
+      case "suite_complete":
+        setSuiteProgress(prev => prev ? { ...prev, done:msg.ran?.length||0 } : null);
+        addRunLog(`Suite complete — ${msg.ran?.length||0} use cases ran`, "success");
+        refreshBadge();
+        setOnRunComplete(prev => (prev||0) + 1);
+        break;
       case "stopped":
-        setRunPhase("idle"); addRunLog("Stopped.", "system"); break;
+        setRunPhase("idle"); addRunLog("Stopped.", "system");
+        break;
     }
-    setTimeout(() => runLogRef.current?.scrollTo({ top: 99999, behavior: "smooth" }), 50);
+    setTimeout(() => runLogRef.current?.scrollTo({ top:99999, behavior:"smooth" }), 50);
   }, [addRunLog, refreshBadge]);
 
-  const connect = useCallback(() => {
+  // ── WebSocket connection ───────────────────────────────────────────────────
+  const doConnect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
     setWsStatus("connecting");
     wsRef.current = createWSConnection({
       onOpen:    () => { setWsStatus("connected"); refreshBadge(); },
-      onClose:   () => { setWsStatus("disconnected"); wsRef.current = null; },
+      onClose:   () => {
+        setWsStatus("disconnected");
+        wsRef.current = null;
+        // Auto-reconnect after 3s
+        retryTimer.current = setTimeout(() => attemptAutoConnect(), 3000);
+      },
       onError:   () => setWsStatus("error"),
       onMessage: handleMessage,
     });
-  }, [handleMessage, refreshBadge]);
+  }, [handleMessage, refreshBadge]); // eslint-disable-line
+
+  const attemptAutoConnect = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_HTTP}/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (res.ok) doConnect();
+      else retryTimer.current = setTimeout(() => attemptAutoConnect(), 3000);
+    } catch {
+      retryTimer.current = setTimeout(() => attemptAutoConnect(), 3000);
+    }
+  }, [doConnect]);
+
+  // Auto-connect on mount
+  useEffect(() => {
+    attemptAutoConnect();
+    return () => clearTimeout(retryTimer.current);
+  }, []); // eslint-disable-line — intentionally empty deps, run once on mount
+
+  const connect = useCallback(() => doConnect(), [doConnect]);
 
   const send = useCallback((payload) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsSend(wsRef.current, payload);
     } else {
-      addRunLog("Backend not connected. Start the backend server first.", "error");
+      addRunLog("Backend not connected — start the backend server first.", "error");
     }
   }, [addRunLog]);
 
   const runUseCase = useCallback((useCase, url, credentials) => {
-    send({ type: "run_usecase", useCase, url, credentials });
+    send({ type:"run_usecase", useCase, url, credentials });
   }, [send]);
 
   const runSuite = useCallback((useCases, url, credentials) => {
-    send({ type: "run_suite", useCases, url, credentials });
+    send({ type:"run_suite", useCases, url, credentials });
   }, [send]);
 
-  const stopRun  = useCallback(() => send({ type: "stop" }), [send]);
+  const stopRun    = useCallback(() => send({ type:"stop" }), [send]);
 
   const resetRunner = useCallback(() => {
     setRunLog([]); setSteps([]); setScreenshots([]);
@@ -185,9 +200,7 @@ export function useRunner() {
     runPhase, steps, currentStep,
     screenshots, viewShot, setViewShot,
     assertions, suiteProgress, runTarget,
-    lastRunId,        // ← connection 4
-    resultsBadge,     // ← connection 3
-    onRunComplete,    // ← connection 1
+    lastRunId, resultsBadge, onRunComplete,
     runUseCase, runSuite, stopRun, resetRunner,
   };
 }

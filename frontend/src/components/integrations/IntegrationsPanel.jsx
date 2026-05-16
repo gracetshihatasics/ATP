@@ -15,6 +15,26 @@ const INTEGRATION_TYPES = {
     { key:"apiToken",    label:"API Token",    placeholder:"your-api-token", secret:true },
     { key:"projectKeys", label:"Project Keys", placeholder:"ATP,DEV (optional)" },
   ]},
+  github: { label:"GitHub", icon:"🐙", color:"#c8d8f0", desc:"Repos, issues, PRs, README for code context", fields:[
+    { key:"token",          label:"Personal Access Token", placeholder:"ghp_...", secret:true },
+    { key:"repos",          label:"Repos",                 placeholder:"owner/repo1,owner/repo2" },
+    { key:"includeReadme",  label:"Include README",        placeholder:"true", type:"checkbox" },
+    { key:"includeIssues",  label:"Include Issues",        placeholder:"true", type:"checkbox" },
+    { key:"includePRs",     label:"Include Open PRs",      placeholder:"true", type:"checkbox" },
+  ]},
+  postman: { label:"Postman", icon:"📮", color:"#ff8c00", desc:"Collections, environments, existing API tests", fields:[
+    { key:"apiKey",      label:"Postman API Key",  placeholder:"PMAK-...", secret:true },
+    { key:"workspaceId", label:"Workspace ID",     placeholder:"optional — leave blank for all" },
+  ]},
+  swagger: { label:"Swagger / OpenAPI", icon:"📐", color:"#4caf50", desc:"Live API spec — endpoints, schemas, operations", fields:[
+    { key:"specUrl",   label:"Spec URL",   placeholder:"https://api.example.com/openapi.json" },
+    { key:"authType",  label:"Auth Type",  placeholder:"none", type:"select", options:["none","bearer","basic","api-key"] },
+    { key:"authValue", label:"Auth Value", placeholder:"token if required", secret:true },
+  ]},
+  miro: { label:"Miro", icon:"🎨", color:"#f0c840", desc:"Boards, wireframes, user journey maps, flowcharts", fields:[
+    { key:"accessToken", label:"Access Token", placeholder:"your-miro-token", secret:true },
+    { key:"boardIds",    label:"Board IDs",    placeholder:"uXjVK...,uXjVM... (optional)" },
+  ]},
   postgres: { label:"PostgreSQL", icon:"🐘", color:"#7ec8ff", desc:"Real test data, schema context", fields:[
     { key:"host",       label:"Host",     placeholder:"localhost" },
     { key:"port",       label:"Port",     placeholder:"5432" },

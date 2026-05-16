@@ -62,3 +62,13 @@ export async function analyseSuiteRuns(runIds) {
   if (!res.ok) throw new Error("Suite analysis failed");
   return (await res.json()).insight;
 }
+
+export async function validateTest(run) {
+  const res = await fetch(`${BACKEND}/api/integrations/validate-test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run }),
+  });
+  if (!res.ok) throw new Error("Validation failed");
+  return (await res.json()).validation;
+}
