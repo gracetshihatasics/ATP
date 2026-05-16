@@ -8,7 +8,8 @@ import { RunnerView }      from "./components/runner/RunnerView.jsx";
 import { ApiAgentView }    from "./components/api/ApiAgentView.jsx";
 import { VaultView }       from "./components/vault/VaultView.jsx";
 import { ResultsView }     from "./components/results/ResultsView.jsx";
-import { GitIntegrationPanel } from "./components/git/GitIntegrationPanel.jsx";
+import { GitIntegrationPanel }  from "./components/git/GitIntegrationPanel.jsx";
+import { IntegrationsPanel }    from "./components/integrations/IntegrationsPanel.jsx";
 
 export default function App() {
   const [mainView, setMainView] = useState("discovery");
@@ -24,12 +25,8 @@ export default function App() {
     };
     runner.resetRunner();
     setMainView("runner");
-    if (runner.wsStatus === "connected") {
-      runner.runUseCase(useCase, run.url, {});
-    } else {
-      runner.connect();
-      setTimeout(() => runner.runUseCase(useCase, run.url, {}), 1800);
-    }
+    if (runner.wsStatus === "connected") runner.runUseCase(useCase, run.url, {});
+    else { runner.connect(); setTimeout(() => runner.runUseCase(useCase, run.url, {}), 1800); }
   };
 
   const handleLaunchRun = (singleUC, suite) => {
@@ -46,19 +43,14 @@ export default function App() {
   return (
     <div style={{ fontFamily:"'IBM Plex Mono','Courier New',monospace", background:"#080c0f", minHeight:"100vh", color:"#c8d8e8" }}>
       <style>{GLOBAL_CSS}</style>
-      <Header
-        wsStatus={runner.wsStatus}
-        onConnect={runner.connect}
-        mainView={mainView}
-        setMainView={setMainView}
-        resultsBadge={runner.resultsBadge}
-      />
-      {mainView === "discovery" && <DiscoveryView disc={disc} onLaunchRun={handleLaunchRun} />}
-      {mainView === "runner"    && <RunnerView runner={runner} onBack={() => setMainView("discovery")} onGoToResults={() => setMainView("results")} />}
-      {mainView === "api"       && <ApiAgentView />}
-      {mainView === "vault"     && <VaultView />}
-      {mainView === "results"   && <ResultsView onRunComplete={runner.onRunComplete} onRerun={handleRerun} />}
-      {mainView === "git"       && <GitIntegrationPanel />}
+      <Header wsStatus={runner.wsStatus} onConnect={runner.connect} mainView={mainView} setMainView={setMainView} resultsBadge={runner.resultsBadge} />
+      {mainView === "discovery"     && <DiscoveryView disc={disc} onLaunchRun={handleLaunchRun} />}
+      {mainView === "runner"        && <RunnerView runner={runner} onBack={() => setMainView("discovery")} onGoToResults={() => setMainView("results")} />}
+      {mainView === "api"           && <ApiAgentView />}
+      {mainView === "vault"         && <VaultView />}
+      {mainView === "results"       && <ResultsView onRunComplete={runner.onRunComplete} onRerun={handleRerun} />}
+      {mainView === "git"           && <GitIntegrationPanel />}
+      {mainView === "integrations"  && <IntegrationsPanel url={disc.url} />}
     </div>
   );
 }

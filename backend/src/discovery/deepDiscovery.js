@@ -3,6 +3,7 @@ import { config }     from "../config/index.js";
 import { surfaceScan } from "./surfaceScanner.js";
 import { resolveAuth } from "./authResolver.js";
 import { mapFeatures } from "./featureMapper.js";
+import { getContextSummary } from "../integrations/contextBuilder.js";
 
 const client = new Anthropic({ apiKey: config.apiKey });
 
@@ -88,7 +89,14 @@ export async function runAdvancedDiscovery(url, credentialId, onEvent = () => {}
     onEvent({ type: "phase_update", phase: 4, total: 4, label: "Generating use cases", status: "running" });
     onEvent({ type: "log", msg: "AI synthesising all discoveries into test plan...", level: "ai" });
 
-    const plan = await generateUseCases(url, surface, authContext, featureAreas, onEvent);
+    // Pull in integration context (Jira, Confluence, DB, etc.)
+    onEvent({ type: "log", msg: "Loading integration context...", level: "ai" });
+    const integrationContext = await getContextSummary(url).catch(() => "");
+    if (integrationContext) {
+      onEvent({ type: "log", msg: "✓ Integration context loaded", level: "success" });
+    }
+
+    const plan = await generateUseCases(url, surface, authContext, featureAreas, integrationContext, onEvent);
 
     onEvent({ type: "phase_update", phase: 4, total: 4, label: "Generating use cases", status: "done",
       summary: `${plan.useCases.length} use cases across ${plan.featureAreas?.length ?? featureAreas.length} features` });
@@ -104,7 +112,7 @@ export async function runAdvancedDiscovery(url, credentialId, onEvent = () => {}
   }
 }
 
-async function generateUseCases(url, surface, authContext, featureAreas, onEvent) {
+async function generateUseCases(url, surface, authContext, featureAreas, integrationContext, onEvent) {
   // Build a rich summary for Claude
   const featureSummary = featureAreas.map(f => `
 Feature: ${f.name}
@@ -131,12 +139,14 @@ Total feature areas discovered: ${featureAreas.length}
 Total flows mapped: ${featureAreas.reduce((s,f) => s + f.flows.length, 0)}
 UI signals detected: ${surface.uiSignals?.features?.map(f => f.feature).join(", ")}
 
+${integrationContext ? `=== INTEGRATION CONTEXT ===\n${integrationContext}\n=== END INTEGRATION CONTEXT ===\n` : ""}
 === FEATURE MAP ===
 ${featureSummary}
 
 Generate a comprehensive test plan covering ALL discovered features.
 For each feature area generate minimum 5 use cases.
-Total should be ${Math.max(featureAreas.length * 5, 20)}+ use cases.`,
+Total should be ${Math.max(featureAreas.length * 5, 20)}+ use cases.
+Use the integration context above to generate more realistic test data and scenarios that match real business requirements.`,
     }],
   });
 

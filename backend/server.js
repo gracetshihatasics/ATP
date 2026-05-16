@@ -18,9 +18,10 @@ import {
   runAllScenariosRoute,
   getResultsRoute,
 } from "./src/routes/apiAgentRoutes.js";
-import { vaultRoutes }   from "./src/vault/vaultRoutes.js";
-import { resultsRoutes } from "./src/results/routes.js";
-import { webhookRoutes } from "./src/routes/webhookRoute.js";
+import { vaultRoutes }        from "./src/vault/vaultRoutes.js";
+import { resultsRoutes }      from "./src/results/routes.js";
+import { webhookRoutes }      from "./src/routes/webhookRoute.js";
+import { integrationRoutes }  from "./src/routes/integrationRoutes.js";
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 const app = express();
@@ -55,6 +56,9 @@ resultsRoutes(app);
 
 // Git / webhook routes
 webhookRoutes(app);
+
+// Integration routes
+integrationRoutes(app);
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });
