@@ -8,15 +8,14 @@ import { RunnerView }      from "./components/runner/RunnerView.jsx";
 import { ApiAgentView }    from "./components/api/ApiAgentView.jsx";
 import { VaultView }       from "./components/vault/VaultView.jsx";
 import { ResultsView }     from "./components/results/ResultsView.jsx";
+import { GitIntegrationPanel } from "./components/git/GitIntegrationPanel.jsx";
 
 export default function App() {
   const [mainView, setMainView] = useState("discovery");
   const disc   = useDiscovery();
   const runner = useRunner();
 
-  // Connection 2: re-run a historical result
   const handleRerun = (run) => {
-    // Reconstruct a minimal use case from the saved run
     const useCase = {
       id:         run.id,
       title:      run.name,
@@ -37,8 +36,8 @@ export default function App() {
     runner.resetRunner();
     setMainView("runner");
     const kick = () => {
-      if (singleUC) runner.runUseCase(singleUC, disc.url, { username: disc.username, password: disc.password });
-      else if (suite) runner.runSuite(suite, disc.url, { username: disc.username, password: disc.password });
+      if (singleUC) runner.runUseCase(singleUC, disc.url, {});
+      else if (suite) runner.runSuite(suite, disc.url, {});
     };
     if (runner.wsStatus === "connected") kick();
     else { runner.connect(); setTimeout(kick, 1800); }
@@ -47,8 +46,6 @@ export default function App() {
   return (
     <div style={{ fontFamily:"'IBM Plex Mono','Courier New',monospace", background:"#080c0f", minHeight:"100vh", color:"#c8d8e8" }}>
       <style>{GLOBAL_CSS}</style>
-
-      {/* Connection 3: pass resultsBadge to Header */}
       <Header
         wsStatus={runner.wsStatus}
         onConnect={runner.connect}
@@ -56,29 +53,12 @@ export default function App() {
         setMainView={setMainView}
         resultsBadge={runner.resultsBadge}
       />
-
       {mainView === "discovery" && <DiscoveryView disc={disc} onLaunchRun={handleLaunchRun} />}
-
-      {/* Connection 4: pass onGoToResults to RunnerView */}
-      {mainView === "runner" && (
-        <RunnerView
-          runner={runner}
-          onBack={() => setMainView("discovery")}
-          onGoToResults={() => setMainView("results")}
-        />
-      )}
-
-      {mainView === "api"     && <ApiAgentView />}
-      {mainView === "vault"   && <VaultView />}
-
-      {/* Connection 1: pass onRunComplete so Results auto-refreshes
-          Connection 2: pass onRerun so Results can send back to Runner */}
-      {mainView === "results" && (
-        <ResultsView
-          onRunComplete={runner.onRunComplete}
-          onRerun={handleRerun}
-        />
-      )}
+      {mainView === "runner"    && <RunnerView runner={runner} onBack={() => setMainView("discovery")} onGoToResults={() => setMainView("results")} />}
+      {mainView === "api"       && <ApiAgentView />}
+      {mainView === "vault"     && <VaultView />}
+      {mainView === "results"   && <ResultsView onRunComplete={runner.onRunComplete} onRerun={handleRerun} />}
+      {mainView === "git"       && <GitIntegrationPanel />}
     </div>
   );
 }

@@ -1,20 +1,21 @@
 {
   "name": "atp-backend",
   "version": "1.0.0",
-  "description": "Autonomous Test Platform — backend runner",
+  "description": "Autonomous Test Platform \u2014 backend runner",
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start":  "node server.js",
-    "dev":    "node --watch server.js",
-    "mcp":    "node mcp-server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "mcp": "node mcp-server.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
-    "cors":              "^2.8.5",
-    "dotenv":            "^16.4.0",
-    "express":           "^4.19.2",
-    "playwright":        "^1.44.0",
-    "ws":                "^8.17.0"
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.2",
+    "playwright": "^1.44.0",
+    "ws": "^8.17.0",
+    "localtunnel": "latest"
   }
 }

@@ -22,3 +22,5 @@ Thumbs.db
 /playwright-report/
 /test-results/
 .results.json
+.git-config.json
+.git-config.json
