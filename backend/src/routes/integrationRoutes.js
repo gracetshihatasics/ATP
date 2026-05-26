@@ -95,3 +95,105 @@ export function integrationRoutes(app) {
     res.json({ ok: true });
   });
 }
+
+// ── MCP setup info ─────────────────────────────────────────────────────────
+export function mcpRoutes(app) {
+  app.get("/api/mcp/setup", async (req, res) => {
+    const { fileURLToPath } = await import("url");
+    const path = await import("path");
+    const fs   = await import("fs");
+
+    const __dirname  = path.dirname(fileURLToPath(import.meta.url));
+    // routes → src → backend, then mcp-server.js sits in backend/
+    const serverPath = path.resolve(__dirname, "../../../mcp-server.js");
+    const nodePath   = process.execPath;
+
+    const mcpConfig = {
+      mcpServers: {
+        atp: {
+          command: nodePath,
+          args:    [serverPath],
+          env: {
+            ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? "sk-ant-***" : "YOUR_API_KEY_HERE",
+            PORT: process.env.PORT || "3579",
+          },
+        },
+      },
+    };
+
+    // Try to detect Claude Desktop config file
+    const homeDir     = process.env.HOME || process.env.USERPROFILE || "~";
+    const macPath     = `${homeDir}/Library/Application Support/Claude/claude_desktop_config.json`;
+    const winPath     = `${process.env.APPDATA || homeDir}\\Claude\\claude_desktop_config.json`;
+    const configPath  = process.platform === "win32" ? winPath : macPath;
+    const configExists = fs.existsSync(configPath);
+
+    res.json({
+      ok:          true,
+      serverPath,
+      nodePath,
+      configPath,
+      configExists,
+      mcpConfig,
+      tools:       [
+        "discover_usecases",
+        "run_usecase",
+        "run_suite",
+        "get_results",
+        "analyse_failure",
+        "list_credentials",
+        "get_context",
+        "update_tests_from_diff",
+        "scan_code_intelligence",
+      ],
+      examplePrompts: [
+        "Discover test cases for https://asics.com",
+        "Run the checkout test suite on https://staging.asics.com",
+        "What test results failed recently?",
+        "Analyse why run-abc123 failed",
+        "What credentials do I have in the vault?",
+        "Scan https://asics.com for hidden code",
+        "Update tests based on this git diff: ...",
+      ],
+    });
+  });
+
+  // Write config directly to Claude Desktop
+  app.post("/api/mcp/install", async (req, res) => {
+    const fs   = await import("fs");
+    const path = await import("path");
+    const { fileURLToPath } = await import("url");
+
+    const __dirname  = path.dirname(fileURLToPath(import.meta.url));
+    // src/routes → src → backend → mcp-server.js
+    const serverPath = path.resolve(__dirname, "../../mcp-server.js");
+    const homeDir    = process.env.HOME || process.env.USERPROFILE || "";
+    const configPath = process.platform === "win32"
+      ? `${process.env.APPDATA}\\Claude\\claude_desktop_config.json`
+      : `${homeDir}/Library/Application Support/Claude/claude_desktop_config.json`;
+
+    try {
+      let existing = {};
+      if (fs.existsSync(configPath)) {
+        existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      }
+
+      if (!existing.mcpServers) existing.mcpServers = {};
+      existing.mcpServers.atp = {
+        command: process.execPath,
+        args:    [serverPath],
+        env: {
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "",
+          PORT:              process.env.PORT || "3579",
+        },
+      };
+
+      // Ensure directory exists
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(existing, null, 2), "utf8");
+      res.json({ ok: true, configPath, message: "ATP added to Claude Desktop. Restart Claude Desktop to apply." });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+}

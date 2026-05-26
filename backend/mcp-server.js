@@ -1,16 +1,13 @@
 #!/usr/bin/env node
-import "dotenv/config";
 /**
- * ATP MCP Server
+ * ATP MCP Server — stdio transport
+ * Must be run from the backend/ directory OR with --prefix pointing to it.
  *
- * Exposes all ATP capabilities as MCP tools so Claude can call them directly.
- * Uses stdio transport — Claude spawns this process and talks over stdin/stdout.
- *
- * Add to Claude settings:
+ * Claude Desktop config:
  * {
  *   "mcpServers": {
  *     "atp": {
- *       "command": "node",
+ *       "command": "/opt/homebrew/Cellar/node/26.0.0/bin/node",
  *       "args": ["/absolute/path/to/atp/backend/mcp-server.js"],
  *       "env": { "ANTHROPIC_API_KEY": "sk-ant-..." }
  *     }
@@ -18,15 +15,65 @@ import "dotenv/config";
  * }
  */
 
-import { ATP_TOOLS }          from "./src/mcp/tools.js";
+// ── Set working directory to backend/ so all relative imports resolve ─────────
+import { fileURLToPath } from "url";
+import path from "path";
+import process from "process";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+process.chdir(__dirname); // ensure CWD = backend/
+
+// ── Now load everything else ──────────────────────────────────────────────────
+import "dotenv/config";
+
+import { ATP_TOOLS }            from "./src/mcp/tools.js";
 import {
   discoverUsecases,
   runUsecase,
   runSuite,
-  getTestPlan,
-  getRunResults,
+  getResults,
+  analyseFailureHandler,
+  listCredentials,
+  getContext,
   updateTestsFromDiff,
+  scanCodeIntelligence,
 } from "./src/mcp/handlers.js";
+
+// ── Quick setup helper ────────────────────────────────────────────────────────
+if (process.argv.includes("--setup")) {
+  const serverPath = path.resolve(__dirname, "mcp-server.js");
+  const nodePath   = process.execPath;
+  const homeDir    = process.env.HOME || process.env.USERPROFILE || "~";
+  const configPath = process.platform === "win32"
+    ? `${process.env.APPDATA}\\Claude\\claude_desktop_config.json`
+    : `${homeDir}/Library/Application Support/Claude/claude_desktop_config.json`;
+
+  const config = {
+    mcpServers: {
+      atp: {
+        command: nodePath,
+        args:    [serverPath],
+        env: {
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || "sk-ant-...",
+          PORT: process.env.PORT || "3579",
+        },
+      },
+    },
+  };
+
+  console.error("\n✓ ATP MCP Server setup\n");
+  console.error(`Config file: ${configPath}\n`);
+  console.error("Add this to claude_desktop_config.json:\n");
+  console.error(JSON.stringify(config, null, 2));
+  console.error("\nThen restart Claude Desktop (Cmd+Q on Mac).\n");
+  process.exit(0);
+}
+
+// ── Verify ANTHROPIC_API_KEY is set ─────────────────────────────────────────
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.error("[ATP MCP] ERROR: ANTHROPIC_API_KEY is not set.\nAdd it to the 'env' section of your claude_desktop_config.json.");
+  process.exit(1);
+}
 
 // ── MCP stdio transport ───────────────────────────────────────────────────────
 let buffer = "";
@@ -35,7 +82,7 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", chunk => {
   buffer += chunk;
   const lines = buffer.split("\n");
-  buffer = lines.pop(); // keep incomplete line
+  buffer = lines.pop();
   for (const line of lines) {
     if (line.trim()) handleLine(line.trim());
   }
@@ -47,11 +94,10 @@ function respond(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
-function error(id, code, message) {
+function respondError(id, code, message) {
   respond({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
-// ── JSON-RPC message handler ──────────────────────────────────────────────────
 async function handleLine(line) {
   let req;
   try { req = JSON.parse(line); } catch { return; }
@@ -60,57 +106,54 @@ async function handleLine(line) {
 
   try {
     switch (method) {
-
-      // ── MCP handshake ──────────────────────────────────────────────────────
       case "initialize":
         respond({
           jsonrpc: "2.0", id,
           result: {
             protocolVersion: "2024-11-05",
             capabilities:    { tools: {} },
-            serverInfo:      { name: "atp", version: "0.2.0" },
+            serverInfo:      { name: "atp", version: "0.5.0" },
           },
         });
         break;
 
       case "notifications/initialized":
-        break; // no response needed
+        break;
 
-      // ── Tool listing ───────────────────────────────────────────────────────
       case "tools/list":
         respond({ jsonrpc: "2.0", id, result: { tools: ATP_TOOLS } });
         break;
 
-      // ── Tool execution ─────────────────────────────────────────────────────
       case "tools/call": {
         const { name, arguments: args } = params;
-        const result = await dispatch(name, args);
+        const result = await dispatch(name, args || {});
         respond({
           jsonrpc: "2.0", id,
-          result: {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          },
+          result: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
         });
         break;
       }
 
       default:
-        error(id, -32601, `Method not found: ${method}`);
+        respondError(id, -32601, `Method not found: ${method}`);
     }
   } catch (err) {
-    error(id, -32603, err.message);
+    console.error(`[ATP MCP] Error handling ${method}:`, err.message);
+    respondError(id, -32603, err.message);
   }
 }
 
-// ── Dispatch tool name → handler ──────────────────────────────────────────────
 async function dispatch(name, args) {
   switch (name) {
     case "discover_usecases":      return discoverUsecases(args);
     case "run_usecase":            return runUsecase(args);
     case "run_suite":              return runSuite(args);
-    case "get_test_plan":          return getTestPlan(args);
-    case "get_run_results":        return getRunResults(args);
+    case "get_results":            return getResults(args);
+    case "analyse_failure":        return analyseFailureHandler(args);
+    case "list_credentials":       return listCredentials();
+    case "get_context":            return getContext(args);
     case "update_tests_from_diff": return updateTestsFromDiff(args);
+    case "scan_code_intelligence": return scanCodeIntelligence(args);
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }

@@ -2,7 +2,9 @@ import { useState }        from "react";
 import { GLOBAL_CSS }      from "./constants/theme.js";
 import { useDiscovery }    from "./hooks/useDiscovery.js";
 import { useRunner }       from "./hooks/useRunner.js";
+import { useApiHealth }    from "./hooks/useApiHealth.js";
 import { Header }          from "./components/shared/Header.jsx";
+import { ApiKeyBanner }    from "./components/shared/ApiKeyBanner.jsx";
 import { DiscoveryView }   from "./components/discovery/DiscoveryView.jsx";
 import { RunnerView }      from "./components/runner/RunnerView.jsx";
 import { ApiAgentView }    from "./components/api/ApiAgentView.jsx";
@@ -13,8 +15,9 @@ import { IntegrationsPanel }    from "./components/integrations/IntegrationsPane
 
 export default function App() {
   const [mainView, setMainView] = useState("discovery");
-  const disc   = useDiscovery();
-  const runner = useRunner();
+  const disc      = useDiscovery();
+  const runner    = useRunner();
+  const apiHealth = useApiHealth();
 
   const handleRerun = (run) => {
     const useCase = {
@@ -43,7 +46,8 @@ export default function App() {
   return (
     <div style={{ fontFamily:"'IBM Plex Mono','Courier New',monospace", background:"#080c0f", minHeight:"100vh", color:"#c8d8e8" }}>
       <style>{GLOBAL_CSS}</style>
-      <Header wsStatus={runner.wsStatus} onConnect={runner.connect} mainView={mainView} setMainView={setMainView} resultsBadge={runner.resultsBadge} />
+      <Header wsStatus={runner.wsStatus} onConnect={runner.connect} mainView={mainView} setMainView={setMainView} resultsBadge={runner.resultsBadge} apiHealth={apiHealth} />
+      <ApiKeyBanner apiHealth={apiHealth} onRecheck={apiHealth.recheck} />
       {mainView === "discovery"     && <DiscoveryView disc={disc} onLaunchRun={handleLaunchRun} />}
       {mainView === "runner"        && <RunnerView runner={runner} onBack={() => setMainView("discovery")} onGoToResults={() => setMainView("results")} />}
       {mainView === "api"           && <ApiAgentView />}

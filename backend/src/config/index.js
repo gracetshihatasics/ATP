@@ -1,7 +1,7 @@
 export const config = {
   port:        parseInt(process.env.PORT  || "3579"),
   apiKey:      process.env.ANTHROPIC_API_KEY || "",
-  model:       "claude-sonnet-4-20250514",
+  model:       "claude-sonnet-4-6",
   maxTokens:   2000,
   browser: {
     headless:  true,

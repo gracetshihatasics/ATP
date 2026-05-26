@@ -1,26 +1,16 @@
 /**
- * All MCP tool definitions for the Autonomous Test Platform.
- * Each entry maps directly to a tool Claude can call.
+ * ATP MCP Tool definitions — all tools Claude can call.
  */
 export const ATP_TOOLS = [
   {
     name: "discover_usecases",
-    description: "Analyse a web application URL and autonomously discover all test use cases, API endpoints, and suggested test suites. Returns a full structured test plan.",
+    description: "Analyse a web application and autonomously discover all test use cases, features, API endpoints, and test suites. Use this before running tests on a new URL. Returns a full structured test plan with prioritised use cases.",
     input_schema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "The full URL of the application to analyse (e.g. https://asics.com)",
-        },
-        username: {
-          type: "string",
-          description: "Optional login username/email if the app requires authentication",
-        },
-        password: {
-          type: "string",
-          description: "Optional login password if the app requires authentication",
-        },
+        url:          { type: "string",  description: "Full URL of the application (e.g. https://asics.com)" },
+        credentialId: { type: "string",  description: "Optional vault credential ID to use for authenticated discovery" },
+        advanced:     { type: "boolean", description: "Use advanced 4-phase discovery (slower but finds more features). Default: false" },
       },
       required: ["url"],
     },
@@ -28,34 +18,23 @@ export const ATP_TOOLS = [
 
   {
     name: "run_usecase",
-    description: "Execute a single test use case in a headless browser. Navigates to the URL, performs all steps via AI-generated Playwright actions, captures screenshots at each step, and runs assertions. Returns pass/fail results with screenshot data.",
+    description: "Execute a single test use case in a real Chromium browser. Uses AI vision, smart waiting, retry engine, and form intelligence. Returns pass/fail with step details and screenshots.",
     input_schema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "The application URL to test",
-        },
+        url:     { type: "string", description: "Application URL to test" },
         useCase: {
           type: "object",
-          description: "The use case object from discover_usecases (must include id, title, steps, assertions)",
+          description: "Use case from discover_usecases",
           properties: {
-            id:          { type: "string" },
-            title:       { type: "string" },
-            steps:       { type: "array", items: { type: "string" } },
-            assertions:  { type: "array", items: { type: "string" } },
-            requiresAuth:{ type: "boolean" },
+            id:         { type: "string" },
+            title:      { type: "string" },
+            steps:      { type: "array", items: { type: "string" } },
+            assertions: { type: "array", items: { type: "string" } },
           },
           required: ["id", "title", "steps"],
         },
-        credentials: {
-          type: "object",
-          description: "Optional login credentials",
-          properties: {
-            username: { type: "string" },
-            password: { type: "string" },
-          },
-        },
+        credentialId: { type: "string", description: "Optional vault credential ID for authentication" },
       },
       required: ["url", "useCase"],
     },
@@ -63,91 +42,90 @@ export const ATP_TOOLS = [
 
   {
     name: "run_suite",
-    description: "Execute multiple use cases sequentially as a test suite. Returns aggregated results for all use cases including pass/fail counts and screenshots.",
+    description: "Execute multiple use cases sequentially as a test suite. Returns aggregated pass/fail results with AI suite-level insight.",
     input_schema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "The application URL to test",
-        },
-        useCases: {
-          type: "array",
-          description: "Array of use case objects to run in sequence",
-          items: {
-            type: "object",
-            properties: {
-              id:         { type: "string" },
-              title:      { type: "string" },
-              steps:      { type: "array", items: { type: "string" } },
-              assertions: { type: "array", items: { type: "string" } },
-            },
-            required: ["id", "title", "steps"],
-          },
-        },
-        credentials: {
-          type: "object",
-          properties: {
-            username: { type: "string" },
-            password: { type: "string" },
-          },
-        },
+        url:          { type: "string",  description: "Application URL to test" },
+        useCases:     { type: "array",   description: "Array of use case objects", items: { type: "object" } },
+        credentialId: { type: "string",  description: "Optional vault credential ID" },
+        suiteFilter:  { type: "string",  description: "Optional: 'critical', 'high', 'auth', or a category name to filter use cases" },
       },
       required: ["url", "useCases"],
     },
   },
 
   {
-    name: "get_test_plan",
-    description: "Retrieve a previously discovered test plan by URL. Returns null if the URL has not been analysed yet.",
+    name: "get_results",
+    description: "Get test results — recent runs, summary stats, or a specific run by ID. Use this to check what passed/failed.",
     input_schema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "The URL whose test plan to retrieve",
-        },
+        runId:  { type: "string",  description: "Specific run ID to retrieve (optional)" },
+        limit:  { type: "number",  description: "Number of recent results to return (default 10)" },
+        status: { type: "string",  description: "Filter by 'pass' or 'fail' (optional)" },
+        url:    { type: "string",  description: "Filter by application URL (optional)" },
       },
-      required: ["url"],
     },
   },
 
   {
-    name: "get_run_results",
-    description: "Get the results of a completed test run including step-by-step pass/fail status, assertion results, and screenshot URLs.",
+    name: "analyse_failure",
+    description: "AI-powered failure analysis for a specific run. Returns root cause, category, severity, whether it is an app bug or flaky test, and recommended fixes.",
     input_schema: {
       type: "object",
       properties: {
-        runId: {
-          type: "string",
-          description: "The run ID returned by run_usecase or run_suite",
-        },
+        runId: { type: "string", description: "The run ID to analyse" },
       },
       required: ["runId"],
     },
   },
 
   {
-    name: "update_tests_from_diff",
-    description: "Given a Git diff (pull request changes), analyse which test cases are affected and update or regenerate them automatically. Use this when a PR is opened or merged.",
+    name: "list_credentials",
+    description: "List all credentials and credential sets in the vault (secrets are masked). Use this to find the right credential ID for a test.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+
+  {
+    name: "get_context",
+    description: "Build the full integration context for a URL — pulls data from all connected integrations (Jira, Confluence, DB, GitHub, etc.). Useful to understand what ATP knows before running tests.",
     input_schema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "The application URL the tests belong to",
-        },
-        diff: {
-          type: "string",
-          description: "The raw git diff string from the pull request",
-        },
-        affectedFiles: {
-          type: "array",
-          items: { type: "string" },
-          description: "List of changed file paths from the PR",
-        },
+        url:  { type: "string", description: "Application URL to build context for" },
+        goal: { type: "string", description: "Optional testing goal to focus the context" },
+      },
+      required: ["url"],
+    },
+  },
+
+  {
+    name: "update_tests_from_diff",
+    description: "Given a git diff, identify which tests are affected and update them. Use when a PR is merged or code changes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url:           { type: "string", description: "Application URL the tests belong to" },
+        diff:          { type: "string", description: "Raw git diff string" },
+        affectedFiles: { type: "array",  items: { type: "string" }, description: "Changed file paths" },
       },
       required: ["url", "diff"],
+    },
+  },
+
+  {
+    name: "scan_code_intelligence",
+    description: "Scan a web page for hidden elements, dead code, disabled feature flags, and unreachable UI. Returns findings with severity and recommendations.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Page URL to scan" },
+      },
+      required: ["url"],
     },
   },
 ];

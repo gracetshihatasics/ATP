@@ -21,7 +21,7 @@ import {
 import { vaultRoutes }        from "./src/vault/vaultRoutes.js";
 import { resultsRoutes }      from "./src/results/routes.js";
 import { webhookRoutes }      from "./src/routes/webhookRoute.js";
-import { integrationRoutes }  from "./src/routes/integrationRoutes.js";
+import { integrationRoutes, mcpRoutes } from "./src/routes/integrationRoutes.js";
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 const app = express();
@@ -32,8 +32,53 @@ const httpServer = createServer(app);
 
 // Health check
 app.get("/health", (_, res) =>
-  res.json({ ok: true, sessions: sessionManager.count() })
+  res.json({ ok: true, sessions: sessionManager.count(), hasApiKey: !!config.apiKey && config.apiKey.length > 10 })
 );
+
+// Diagnose Anthropic connection
+app.get("/api/health/anthropic", async (_, res) => {
+  if (!config.apiKey || config.apiKey.length < 10) {
+    return res.json({ ok: false, error: "ANTHROPIC_API_KEY not set in backend/.env", model: config.model });
+  }
+  try {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const testClient = new Anthropic({ apiKey: config.apiKey });
+    await testClient.messages.create({
+      model:      config.model,
+      max_tokens: 5,
+      messages:   [{ role: "user", content: "Hi" }],
+    });
+    res.json({ ok: true, model: config.model });
+  } catch (err) {
+    // Log everything so we can diagnose
+    console.error("[health/anthropic] FAIL:", {
+      name:    err.name,
+      message: err.message,
+      status:  err.status,
+      type:    err.error?.type,
+      detail:  err.error?.error?.message || err.error?.message,
+      model:   config.model,
+      keyLen:  config.apiKey?.length,
+    });
+
+    const msg  = err.message || "";
+    const type =
+      (err.status === 401 || msg.includes("authentication") || msg.includes("invalid x-api-key")) ? "invalid-key" :
+      (err.status === 403)                                                                           ? "invalid-key" :
+      (err.status === 429 || msg.includes("quota") || msg.includes("credit"))                       ? "quota" :
+      (msg.includes("not_found") || msg.includes("model"))                                           ? "model-error" :
+      "network";
+
+    res.json({
+      ok:        false,
+      error:     msg,
+      errorType: type,
+      model:     config.model,
+      status:    err.status,
+      detail:    err.error?.error?.message || err.error?.message,
+    });
+  }
+});
 
 // AI routes — proxied from frontend to avoid CORS
 app.post("/api/discover",             discoverRoute);
@@ -59,6 +104,7 @@ webhookRoutes(app);
 
 // Integration routes
 integrationRoutes(app);
+mcpRoutes(app);
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });
