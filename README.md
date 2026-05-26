@@ -518,6 +518,115 @@ VAULT_SECRET=change-this-to-a-long-random-string
 GITHUB_TOKEN=ghp_...
 GITHUB_WEBHOOK_SECRET=your-webhook-secret
 ATP_BASE_URL=https://your-public-url
+
+# Network / TLS (see Troubleshooting below if you get "Connection error")
+NODE_TLS_REJECT_UNAUTHORIZED=0   # Add this if on a corporate network or VPN
+HTTPS_PROXY=http://127.0.0.1:8080  # Add this if behind a proxy
+```
+
+> **Important:** After editing `backend/.env` you must **restart the backend** for changes to take effect. The `.env` file is only read on startup — it is not hot-reloaded.
+>
+> ```bash
+> # Stop the backend (Ctrl+C), then restart:
+> cd ~/atp/backend && npm run dev
+> ```
+
+---
+
+## Troubleshooting
+
+### "Connection error" / Cannot reach Anthropic API
+
+ATP calls `api.anthropic.com` from the Node.js backend. If you see `Connection error` in the discovery log or the header shows "API unreachable", the issue is a **network or TLS problem on your machine** — not the API key.
+
+#### Diagnose
+
+Run these in your terminal to identify the cause:
+
+```bash
+# 1. Can curl reach Anthropic?
+curl -I https://api.anthropic.com
+
+# 2. Can Node reach Anthropic?
+node -e "fetch('https://api.anthropic.com').then(r=>console.log('OK',r.status)).catch(e=>console.log('FAIL:',e.cause?.message||e.message))"
+
+# 3. Is there a system proxy?
+scutil --proxy | grep -E "HTTP|HTTPS|Enable"   # Mac
+echo $https_proxy $HTTPS_PROXY                  # Linux/Mac
+```
+
+#### Fix A — Corporate network / SSL inspection proxy (most common)
+
+Symptoms: `curl` works but `node` fails with `fetch failed`, or you get a TLS/certificate error.
+
+Your network is doing SSL inspection (common on corporate WiFi, VPNs, and managed Macs). Node.js rejects the intercepted certificate.
+
+**Fix:**
+```bash
+# Add to backend/.env
+echo "NODE_TLS_REJECT_UNAUTHORIZED=0" >> ~/atp/backend/.env
+
+# Restart the backend
+cd ~/atp/backend && npm run dev
+```
+
+Then verify it works:
+```bash
+curl http://localhost:3579/api/health/anthropic
+# Should return: {"ok":true,"model":"claude-sonnet-4-6"}
+```
+
+#### Fix B — Behind a proxy
+
+Symptoms: `echo $https_proxy` shows a URL, or `scutil --proxy` shows `HTTPSEnable: 1`.
+
+```bash
+# Add to backend/.env (replace with your actual proxy URL and port)
+echo "HTTPS_PROXY=http://127.0.0.1:8080" >> ~/atp/backend/.env
+
+# Restart the backend
+cd ~/atp/backend && npm run dev
+```
+
+#### Fix C — VPN blocking Anthropic
+
+Symptoms: both `curl` and `node` fail with `ECONNREFUSED` or `ETIMEDOUT`.
+
+Your VPN is blocking outbound connections to `api.anthropic.com`. Options:
+- Disconnect VPN, run ATP, reconnect after
+- Ask your network admin to whitelist `api.anthropic.com` port 443
+- Use a split-tunnel VPN configuration
+
+#### Fix D — API key issues
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ANTHROPIC_API_KEY not set` | Missing from `.env` | Add `ANTHROPIC_API_KEY=sk-ant-...` to `backend/.env` and restart |
+| `invalid x-api-key` or 401 | Key is wrong or revoked | Generate a new key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
+| `quota exceeded` or 429 | Out of API credits | Check billing at [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing) |
+
+#### Why Advanced Discovery works but Quick Discover fails
+
+Advanced Discovery uses Playwright (a full Chromium browser) to visit your app before calling Claude. The browser has its own network stack and certificate handling separate from Node.js. Quick Discover calls the Anthropic SDK directly from Node.js, which is what gets blocked.
+
+Adding `NODE_TLS_REJECT_UNAUTHORIZED=0` to `.env` fixes both.
+
+#### Full reset — if nothing works
+
+```bash
+# Check your .env has the key and the fix
+cat ~/atp/backend/.env
+
+# Expected output includes:
+# ANTHROPIC_API_KEY=sk-ant-...
+# NODE_TLS_REJECT_UNAUTHORIZED=0
+
+# Hard restart (kill everything and start fresh)
+pkill -f "node.*server.js" 2>/dev/null
+cd ~/atp/backend && npm run dev
+
+# Test the API connection directly
+curl http://localhost:3579/api/health/anthropic
 ```
 
 ---
