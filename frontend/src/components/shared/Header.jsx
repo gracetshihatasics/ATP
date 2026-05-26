@@ -4,17 +4,23 @@ export function Header({ wsStatus, onConnect, mainView, setMainView, resultsBadg
 
   // API key status dot
   const apiOk   = !apiHealth || apiHealth.status === "ok" || apiHealth.status === "checking";
-  const apiColor = apiHealth?.status === "ok"      ? "#4caf50"
-                 : apiHealth?.status === "checking" ? "#2d6aad"
-                 : apiHealth?.status === "quota"    ? "#ff8c00"
+  const apiColor = apiHealth?.status === "ok"       ? "#4caf50"
+                 : apiHealth?.status === "checking"  ? "#2d6aad"
+                 : apiHealth?.status === "network"   ? "#f0c040"
+                 : apiHealth?.status === "quota"     ? "#ff8c00"
                  : "#ff3b3b";
-  const apiLabel = apiHealth?.status === "ok"       ? apiHealth.model || "API ok"
-                 : apiHealth?.status === "checking"  ? "checking API..."
-                 : apiHealth?.status === "no-key"    ? "no API key"
-                 : apiHealth?.status === "invalid-key"? "key revoked"
-                 : apiHealth?.status === "quota"      ? "quota exceeded"
-                 : apiHealth?.status === "network"    ? "API unreachable"
+
+  const apiLabel = apiHealth?.status === "ok"          ? apiHealth.model || "API ok"
+                 : apiHealth?.status === "checking"    ? "checking..."
+                 : apiHealth?.status === "no-key"      ? "no API key"
+                 : apiHealth?.status === "invalid-key" ? "key revoked"
+                 : apiHealth?.status === "quota"       ? "quota exceeded"
+                 : apiHealth?.status === "network"     ? "API unreachable"
                  : "API error";
+
+  const apiTitle = apiHealth?.status === "network"
+    ? "Cannot reach api.anthropic.com — check VPN/firewall.\nRun in terminal: curl -I https://api.anthropic.com"
+    : apiHealth?.error || apiLabel;
 
   return (
     <div style={{ background:"#0a0e12", borderBottom:"0.5px solid #1e3a5f", padding:"8px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
@@ -27,7 +33,7 @@ export function Header({ wsStatus, onConnect, mainView, setMainView, resultsBadg
       <div style={{ display:"flex", alignItems:"center", gap:10 }}>
         {/* API key status */}
         <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:9, color:apiColor, background:"#0d1520", borderRadius:4, padding:"3px 8px", border:`0.5px solid ${apiColor}40` }}
-          title={apiHealth?.error || apiLabel}>
+          title={apiTitle}>
           <div style={{ width:5, height:5, borderRadius:"50%", background:apiColor, flexShrink:0 }} />
           <span style={{ maxWidth:120, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{apiLabel}</span>
         </div>
@@ -48,6 +54,7 @@ export function Header({ wsStatus, onConnect, mainView, setMainView, resultsBadg
           ["api","🔌 API"],
           ["runner","▶ Runner"],
           ["vault","🔐 Vault"],
+          ["testbed","🐙 Repos"],
           ["integrations","🔗 Integrations"],
           ["git","⚙ Git CI"],
         ].map(([v,l]) => (

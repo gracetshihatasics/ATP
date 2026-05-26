@@ -4,6 +4,12 @@ import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import cors        from "cors";
 import crypto      from "crypto";
+
+// ── Proxy / TLS fix — apply before any network calls ──────────────────────────
+// If HTTPS_PROXY or NODE_TLS_REJECT_UNAUTHORIZED is set in .env it takes effect here
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
 import { config }  from "./src/config/index.js";
 import { messageRouter } from "./src/ws/messageRouter.js";
 import { sessionManager } from "./src/ws/sessionManager.js";
@@ -22,6 +28,7 @@ import { vaultRoutes }        from "./src/vault/vaultRoutes.js";
 import { resultsRoutes }      from "./src/results/routes.js";
 import { webhookRoutes }      from "./src/routes/webhookRoute.js";
 import { integrationRoutes, mcpRoutes } from "./src/routes/integrationRoutes.js";
+import { testbedRoutes, testbedExportRoutes } from "./src/testbed/testbedRoutes.js";
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 const app = express();
@@ -41,42 +48,43 @@ app.get("/api/health/anthropic", async (_, res) => {
     return res.json({ ok: false, error: "ANTHROPIC_API_KEY not set in backend/.env", model: config.model });
   }
   try {
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const testClient = new Anthropic({ apiKey: config.apiKey });
-    await testClient.messages.create({
-      model:      config.model,
-      max_tokens: 5,
-      messages:   [{ role: "user", content: "Hi" }],
+    const https  = await import("https");
+    const result = await new Promise((resolve, reject) => {
+      const body = JSON.stringify({
+        model: config.model, max_tokens: 5,
+        messages: [{ role: "user", content: "Hi" }],
+      });
+      const req = https.default.request({
+        hostname: "api.anthropic.com", port: 443, path: "/v1/messages", method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key":    config.apiKey,
+          "anthropic-version": "2023-06-01",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      }, (r) => {
+        let data = "";
+        r.on("data", c => { data += c; });
+        r.on("end", () => resolve({ status: r.statusCode, body: data }));
+      });
+      req.on("error", reject);
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error("Timeout")); });
+      req.write(body); req.end();
     });
-    res.json({ ok: true, model: config.model });
+
+    const parsed = JSON.parse(result.body);
+    if (result.status === 200) {
+      res.json({ ok: true, model: config.model });
+    } else {
+      const errType =
+        result.status === 401 ? "invalid-key" :
+        result.status === 403 ? "invalid-key" :
+        result.status === 429 ? "quota" : "unknown";
+      res.json({ ok: false, error: parsed.error?.message || result.body, errorType: errType, model: config.model });
+    }
   } catch (err) {
-    // Log everything so we can diagnose
-    console.error("[health/anthropic] FAIL:", {
-      name:    err.name,
-      message: err.message,
-      status:  err.status,
-      type:    err.error?.type,
-      detail:  err.error?.error?.message || err.error?.message,
-      model:   config.model,
-      keyLen:  config.apiKey?.length,
-    });
-
-    const msg  = err.message || "";
-    const type =
-      (err.status === 401 || msg.includes("authentication") || msg.includes("invalid x-api-key")) ? "invalid-key" :
-      (err.status === 403)                                                                           ? "invalid-key" :
-      (err.status === 429 || msg.includes("quota") || msg.includes("credit"))                       ? "quota" :
-      (msg.includes("not_found") || msg.includes("model"))                                           ? "model-error" :
-      "network";
-
-    res.json({
-      ok:        false,
-      error:     msg,
-      errorType: type,
-      model:     config.model,
-      status:    err.status,
-      detail:    err.error?.error?.message || err.error?.message,
-    });
+    console.error("[health/anthropic] FAIL:", err.message);
+    res.json({ ok: false, error: err.message, errorType: "network", model: config.model });
   }
 });
 
@@ -105,6 +113,10 @@ webhookRoutes(app);
 // Integration routes
 integrationRoutes(app);
 mcpRoutes(app);
+
+// Testbed routes
+testbedRoutes(app);
+testbedExportRoutes(app);
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });

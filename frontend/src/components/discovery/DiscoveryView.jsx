@@ -6,6 +6,8 @@ import { EndpointList }                from "./EndpointList.jsx";
 import { SuiteList }                   from "./SuiteList.jsx";
 import { LogPanel }                    from "../shared/LogPanel.jsx";
 import { AdvancedDiscoveryPanel }      from "./AdvancedDiscoveryPanel.jsx";
+import { CodeIntelligencePanel }       from "../intelligence/CodeIntelligencePanel.jsx";
+import { ExportProjectModal }          from "../testbed/ExportProjectModal.jsx";
 import { useAdvancedDiscovery }        from "../../hooks/useAdvancedDiscovery.js";
 
 export function DiscoveryView({ disc, onLaunchRun }) {
@@ -19,6 +21,7 @@ export function DiscoveryView({ disc, onLaunchRun }) {
   } = disc;
 
   const [mainMode, setMainMode] = useState("quick"); // quick | advanced
+  const [showExport, setShowExport] = useState(false);
   const adv = useAdvancedDiscovery();
 
   const handleAdvancedDiscover = () => {
@@ -35,6 +38,7 @@ export function DiscoveryView({ disc, onLaunchRun }) {
   const activePlan = mainMode === "advanced" && adv.plan ? adv.plan : plan;
 
   return (
+    <>
     <div style={{ display:"flex", height:"calc(100vh - 44px)" }}>
       {/* ── Left: input + log ── */}
       <div style={{ width:290, flexShrink:0, borderRight:"0.5px solid #1e3a5f", display:"flex", flexDirection:"column", background:"#090d11" }}>
@@ -83,29 +87,48 @@ export function DiscoveryView({ disc, onLaunchRun }) {
       ) : (
         <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
           {!activePlan ? (
-            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
-              <div style={{ fontSize:28 }}>🔍</div>
-              <div style={{ fontSize:12, color:"#2d6aad", letterSpacing:"0.08em" }}>Awaiting target URL</div>
-              <div style={{ fontSize:10, color:"#1e3a5f", maxWidth:280, textAlign:"center", lineHeight:1.9 }}>
-                <strong style={{ color:"#4a7fa5" }}>Quick</strong> — fast AI scan, 7 use cases<br/>
-                <strong style={{ color:"#a080d0" }}>Advanced</strong> — navigates app, maps all features, unlimited use cases
+            <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+              <div style={{ background:"#0a0e12", borderBottom:"0.5px solid #1e3a5f", padding:"0 14px", display:"flex" }}>
+                <button className={`tab ${activeTab==="code"?"on":""}`} onClick={() => setActiveTab("code")}>🔬 CODE INTEL</button>
               </div>
+              {activeTab === "code" ? (
+                <div style={{ flex:1, overflow:"hidden" }}>
+                  <CodeIntelligencePanel url={url} navLinks={[]} />
+                </div>
+              ) : (
+                <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+                  <div style={{ fontSize:28 }}>🔍</div>
+                  <div style={{ fontSize:12, color:"#2d6aad", letterSpacing:"0.08em" }}>Awaiting target URL</div>
+                  <div style={{ fontSize:10, color:"#1e3a5f", maxWidth:280, textAlign:"center", lineHeight:1.9 }}>
+                    <strong style={{ color:"#4a7fa5" }}>Quick</strong> — fast AI scan, 7 use cases<br/>
+                    <strong style={{ color:"#a080d0" }}>Advanced</strong> — navigates app, maps all features<br/>
+                    <strong style={{ color:"#c8a0f0" }}>Code Intel</strong> — detects hidden/dead code
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <>
               <div style={{ background:"#0a0e12", borderBottom:"0.5px solid #1e3a5f", padding:"0 14px", display:"flex", alignItems:"center", overflowX:"auto" }}>
-                {[["usecases",`USE CASES (${activePlan.useCases?.length??0})`],["endpoints",`API (${activePlan.apiEndpoints?.length??0})`],["suites",`SUITES (${activePlan.suggestedSuites?.length??0})`]].map(([t,l])=>(
+                {[["usecases",`USE CASES (${activePlan.useCases?.length??0})`],["endpoints",`API (${activePlan.apiEndpoints?.length??0})`],["suites",`SUITES (${activePlan.suggestedSuites?.length??0})`],["code","🔬 CODE INTEL"]].map(([t,l])=>(
                   <button key={t} className={`tab ${activeTab===t?"on":""}`} onClick={()=>setActiveTab(t)}>{l}</button>
                 ))}
-                {savedSuite.length > 0 && (
-                  <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
-                    <span style={{ fontSize:9, color:"#4caf50" }}>✓ {savedSuite.length} in suite</span>
-                    <button className="rb" style={{ fontSize:10, padding:"3px 10px" }}
-                      onClick={() => onLaunchRun(null, activePlan.useCases.filter(u => savedSuite.includes(u.id)))}>
-                      ▶ RUN SUITE
-                    </button>
-                  </div>
-                )}
+                <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+                  {savedSuite.length > 0 && (
+                    <>
+                      <span style={{ fontSize:9, color:"#4caf50" }}>✓ {savedSuite.length} in suite</span>
+                      <button className="rb" style={{ fontSize:10, padding:"3px 10px" }}
+                        onClick={() => onLaunchRun(null, activePlan.useCases.filter(u => savedSuite.includes(u.id)))}>
+                        ▶ RUN SUITE
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => setShowExport(true)}
+                    style={{ background:"linear-gradient(135deg,#1a0a2e,#0a0a1e)", border:"0.5px solid #c8a0f0", borderRadius:5, color:"#c8a0f0", cursor:"pointer", fontSize:10, fontWeight:600, padding:"4px 12px", fontFamily:"inherit", letterSpacing:"0.06em", whiteSpace:"nowrap" }}>
+                    🧪 Export Project
+                  </button>
+                </div>
               </div>
 
               {activeTab === "usecases" && (
@@ -130,10 +153,27 @@ export function DiscoveryView({ disc, onLaunchRun }) {
                   onRunSuite={s => onLaunchRun(null, (activePlan.useCases??[]).filter(u => s.useCaseIds?.includes(u.id)))}
                   onSelectUC={uc => { setActiveTab("usecases"); generateScenario(uc); }} />
               )}
+              {activeTab === "code" && (
+                <div style={{ flex:1, overflow:"hidden" }}>
+                  <CodeIntelligencePanel
+                    url={url}
+                    navLinks={activePlan.apiEndpoints?.map(e => ({ href: url + e.path, text: e.path })) ?? []}
+                  />
+                </div>
+              )}
             </>
           )}
         </div>
       )}
     </div>
+
+    {showExport && activePlan && (
+      <ExportProjectModal
+        plan={activePlan}
+        url={url}
+        onClose={() => setShowExport(false)}
+      />
+    )}
+    </>
   );
 }

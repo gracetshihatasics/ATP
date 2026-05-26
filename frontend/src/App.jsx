@@ -12,6 +12,7 @@ import { VaultView }       from "./components/vault/VaultView.jsx";
 import { ResultsView }     from "./components/results/ResultsView.jsx";
 import { GitIntegrationPanel }  from "./components/git/GitIntegrationPanel.jsx";
 import { IntegrationsPanel }    from "./components/integrations/IntegrationsPanel.jsx";
+import { TestbedView }          from "./components/testbed/TestbedView.jsx";
 
 export default function App() {
   const [mainView, setMainView] = useState("discovery");
@@ -55,6 +56,7 @@ export default function App() {
       {mainView === "results"       && <ResultsView onRunComplete={runner.onRunComplete} onRerun={handleRerun} />}
       {mainView === "git"           && <GitIntegrationPanel />}
       {mainView === "integrations"  && <IntegrationsPanel url={disc.url} />}
+      {mainView === "testbed"       && <TestbedView />}
     </div>
   );
 }

@@ -1,7 +1,47 @@
-import Anthropic from "@anthropic-ai/sdk";
+import https  from "https";
 import { config } from "../config/index.js";
 
-const client = new Anthropic({ apiKey: config.apiKey });
+// Use native https instead of fetch-based SDK — bypasses Node fetch issues
+function callClaude(system, userContent, maxTokens = 8000) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model:      config.model,
+      max_tokens: maxTokens,
+      system,
+      messages:   [{ role: "user", content: userContent }],
+    });
+
+    const req = https.request({
+      hostname: "api.anthropic.com",
+      port:     443,
+      path:     "/v1/messages",
+      method:   "POST",
+      headers: {
+        "Content-Type":      "application/json",
+        "x-api-key":         config.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Length":    Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = "";
+      res.on("data", chunk => { data += chunk; });
+      res.on("end", () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.error) return reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
+          resolve(parsed);
+        } catch (e) {
+          reject(new Error(`Failed to parse Anthropic response: ${data.slice(0, 200)}`));
+        }
+      });
+    });
+
+    req.on("error", (e) => reject(new Error(`HTTPS request failed: ${e.message}`)));
+    req.setTimeout(120_000, () => { req.destroy(); reject(new Error("Request timed out after 120s")); });
+    req.write(body);
+    req.end();
+  });
+}
 
 const DISCOVERY_SYSTEM = `You are an expert QA architect. Analyse the given URL and generate a test plan.
 CRITICAL: Respond with ONLY a raw JSON object. Start with { end with }. No markdown. No backticks. Nothing else.
@@ -30,20 +70,21 @@ export async function discoverRoute(req, res) {
   const { url, username, password, credentialId } = req.body;
   if (!url) return res.status(400).json({ error: "url is required" });
 
-  // Guard — catch missing API key before calling Anthropic
   if (!config.apiKey || config.apiKey.length < 10) {
-    return res.status(500).json({
-      error: "ANTHROPIC_API_KEY is not set or invalid. Check backend/.env",
-    });
+    return res.status(500).json({ error: "ANTHROPIC_API_KEY not set in backend/.env" });
   }
 
   try {
-    // Pull integration context if available
     let contextBlock = "";
     try {
       const { getContextSummary } = await import("../integrations/contextBuilder.js");
       const ctx = await getContextSummary(url);
-      if (ctx) contextBlock = `\n\nIntegration context:\n${ctx.slice(0, 2000)}`;
+      if (ctx) contextBlock += `\n\nIntegration context:\n${ctx.slice(0, 2000)}`;
+    } catch {}
+    try {
+      const { getActiveSuiteContext } = await import("../testbed/testbedRoutes.js");
+      const suiteCtx = getActiveSuiteContext();
+      if (suiteCtx) contextBlock += `\n\n${suiteCtx}`;
     } catch {}
 
     const content = [
@@ -54,34 +95,14 @@ export async function discoverRoute(req, res) {
       "\nGenerate a comprehensive test plan.",
     ].filter(Boolean).join("\n");
 
-    const response = await client.messages.create({
-      model:      config.model,
-      max_tokens: 8000,
-      system:     DISCOVERY_SYSTEM,
-      messages:   [{ role: "user", content }],
-    });
-
-    const raw  = response.content[0]?.text ?? "";
-    const plan = extractJSON(raw);
+    const response = await callClaude(DISCOVERY_SYSTEM, content, 8000);
+    const raw      = response.content?.[0]?.text ?? "";
+    const plan     = extractJSON(raw);
     res.json({ ok: true, plan });
+
   } catch (err) {
-    // Log full error server-side
-    console.error("[discover] Error:", {
-      message: err.message,
-      status:  err.status,
-      type:    err.error?.type,
-      detail:  err.error?.error?.message,
-      stack:   err.stack?.split("\n").slice(0,3).join(" | "),
-    });
-
-    // Return meaningful message to frontend
-    const userMessage =
-      err.message?.includes("Connection error") ? "Cannot reach Anthropic API — check your internet connection and ANTHROPIC_API_KEY in backend/.env" :
-      err.message?.includes("authentication")   ? "Invalid ANTHROPIC_API_KEY — check backend/.env" :
-      err.message?.includes("model")            ? `Model error: ${err.message}` :
-      err.error?.error?.message || err.message;
-
-    res.status(500).json({ error: userMessage });
+    console.error("[discover] Error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 }
 
@@ -90,17 +111,13 @@ export async function scenarioRoute(req, res) {
   if (!useCase) return res.status(400).json({ error: "useCase is required" });
 
   try {
-    const response = await client.messages.create({
-      model: config.model,
-      max_tokens: 2000,
-      system: SCENARIO_SYSTEM,
-      messages: [{ role: "user", content: JSON.stringify(useCase) }],
-    });
-
-    const raw = response.content[0]?.text ?? "";
+    const content  = `Use case: ${useCase.title}\nSteps:\n${useCase.steps?.map((s,i) => `${i+1}. ${s}`).join("\n") || ""}`;
+    const response = await callClaude(SCENARIO_SYSTEM, content, 2000);
+    const raw      = response.content?.[0]?.text ?? "";
     const scenario = extractJSON(raw);
     res.json({ ok: true, scenario });
   } catch (err) {
+    console.error("[scenario] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 }
