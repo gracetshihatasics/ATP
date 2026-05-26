@@ -2,7 +2,7 @@ import { StepsPanel }           from "./StepsPanel.jsx";
 import { BrowserView, Lightbox } from "./BrowserView.jsx";
 import { LogPanel }             from "../shared/LogPanel.jsx";
 
-export function RunnerView({ runner, onBack, onGoToResults }) {
+export function RunnerView({ runner, onBack, onGoToResults, hideHeader }) {
   const {
     runLog, runLogRef,
     runPhase, steps, currentStep,
@@ -11,9 +11,11 @@ export function RunnerView({ runner, onBack, onGoToResults }) {
     lastRunId, stopRun,
   } = runner;
 
+  const height = hideHeader ? "100%" : "calc(100vh - 44px)";
+
   return (
     <>
-      <div style={{ display:"flex", height:"calc(100vh - 44px)" }}>
+      <div style={{ display:"flex", height }}>
         <StepsPanel
           steps={steps} currentStep={currentStep}
           runPhase={runPhase} runTarget={runTarget}

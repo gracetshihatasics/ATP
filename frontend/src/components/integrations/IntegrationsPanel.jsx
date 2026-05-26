@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { MCPSetupPanel } from "./MCPSetupPanel.jsx";
 
 const BACKEND = "http://localhost:3579";
 
@@ -177,7 +176,7 @@ export function IntegrationsPanel({ url = "" }) {
 
         {/* Tabs */}
         <div style={{ padding:"6px 10px", borderBottom:"0.5px solid #1e3a5f" }}>
-          {[["integrations","Connections"],["context","Context Preview"],["mcp","🤖 Claude Desktop"]].map(([t,l]) => (
+          {[["integrations","Connections"],["context","Context Preview"]].map(([t,l]) => (
             <button key={t} onClick={() => { setActiveTab(t); if(t==="context") loadContext(); }}
               style={{ display:"block", width:"100%", textAlign:"left", background:activeTab===t?"#1a3050":"none", border:"none", borderRadius:4, color:activeTab===t?"#7ec8ff":"#4a7fa5", cursor:"pointer", fontSize:10, padding:"5px 8px", fontFamily:"inherit", marginBottom:2 }}>
               {l}
@@ -420,12 +419,7 @@ export function IntegrationsPanel({ url = "" }) {
             )}
           </div>
         )}
-        {/* MCP tab */}
-        {activeTab === "mcp" && (
-          <div style={{ flex:1, overflow:"hidden", overflowY:"auto" }}>
-            <MCPSetupPanel />
-          </div>
-        )}
+        {/* MCP moved to Settings → Claude Desktop */}
       </div>
     </div>
   );

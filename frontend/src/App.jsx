@@ -1,41 +1,44 @@
-import { useState }        from "react";
-import { GLOBAL_CSS }      from "./constants/theme.js";
-import { useDiscovery }    from "./hooks/useDiscovery.js";
-import { useRunner }       from "./hooks/useRunner.js";
-import { useApiHealth }    from "./hooks/useApiHealth.js";
-import { Header }          from "./components/shared/Header.jsx";
-import { ApiKeyBanner }    from "./components/shared/ApiKeyBanner.jsx";
-import { DiscoveryView }   from "./components/discovery/DiscoveryView.jsx";
-import { RunnerView }      from "./components/runner/RunnerView.jsx";
-import { ApiAgentView }    from "./components/api/ApiAgentView.jsx";
-import { VaultView }       from "./components/vault/VaultView.jsx";
-import { ResultsView }     from "./components/results/ResultsView.jsx";
-import { GitIntegrationPanel }  from "./components/git/GitIntegrationPanel.jsx";
-import { IntegrationsPanel }    from "./components/integrations/IntegrationsPanel.jsx";
-import { TestbedView }          from "./components/testbed/TestbedView.jsx";
+import { useState }           from "react";
+import { GLOBAL_CSS }         from "./constants/theme.js";
+import { useDiscovery }       from "./hooks/useDiscovery.js";
+import { useRunner }          from "./hooks/useRunner.js";
+import { useApiHealth }       from "./hooks/useApiHealth.js";
+import { Header }             from "./components/shared/Header.jsx";
+import { ApiKeyBanner }       from "./components/shared/ApiKeyBanner.jsx";
+
+// Views
+import { DiscoveryView }      from "./components/discovery/DiscoveryView.jsx";
+import { RunView }            from "./components/run/RunView.jsx";
+import { ResultsView }        from "./components/results/ResultsView.jsx";
+import { ContextView }        from "./components/context/ContextView.jsx";
+import { SettingsView }       from "./components/settings/SettingsView.jsx";
 
 export default function App() {
-  const [mainView, setMainView] = useState("discovery");
+  const [nav, setNav]         = useState("discover");
+  const [runTab, setRunTab]   = useState("runner");   // runner | api
+  const [ctxTab, setCtxTab]   = useState("repos");    // repos | integrations
+  const [setTab, setSetTab]   = useState("vault");    // vault | git | mcp
+
   const disc      = useDiscovery();
   const runner    = useRunner();
   const apiHealth = useApiHealth();
 
   const handleRerun = (run) => {
     const useCase = {
-      id:         run.id,
-      title:      run.name,
-      steps:      run.steps?.map(s => s.description || s.name || "") ?? [],
+      id: run.id, title: run.name,
+      steps:      run.steps?.map(s => s.description || "") ?? [],
       assertions: run.assertions?.map(a => a.assertion) ?? [],
     };
     runner.resetRunner();
-    setMainView("runner");
-    if (runner.wsStatus === "connected") runner.runUseCase(useCase, run.url, {});
-    else { runner.connect(); setTimeout(() => runner.runUseCase(useCase, run.url, {}), 1800); }
+    setNav("run"); setRunTab("runner");
+    const kick = () => runner.runUseCase(useCase, run.url, {});
+    if (runner.wsStatus === "connected") kick();
+    else { runner.connect(); setTimeout(kick, 1800); }
   };
 
   const handleLaunchRun = (singleUC, suite) => {
     runner.resetRunner();
-    setMainView("runner");
+    setNav("run"); setRunTab("runner");
     const kick = () => {
       if (singleUC) runner.runUseCase(singleUC, disc.url, {});
       else if (suite) runner.runSuite(suite, disc.url, {});
@@ -47,16 +50,37 @@ export default function App() {
   return (
     <div style={{ fontFamily:"'IBM Plex Mono','Courier New',monospace", background:"#080c0f", minHeight:"100vh", color:"#c8d8e8" }}>
       <style>{GLOBAL_CSS}</style>
-      <Header wsStatus={runner.wsStatus} onConnect={runner.connect} mainView={mainView} setMainView={setMainView} resultsBadge={runner.resultsBadge} apiHealth={apiHealth} />
+      <Header
+        nav={nav} setNav={setNav}
+        wsStatus={runner.wsStatus} onConnect={runner.connect}
+        resultsBadge={runner.resultsBadge}
+        apiHealth={apiHealth}
+      />
       <ApiKeyBanner apiHealth={apiHealth} onRecheck={apiHealth.recheck} />
-      {mainView === "discovery"     && <DiscoveryView disc={disc} onLaunchRun={handleLaunchRun} />}
-      {mainView === "runner"        && <RunnerView runner={runner} onBack={() => setMainView("discovery")} onGoToResults={() => setMainView("results")} />}
-      {mainView === "api"           && <ApiAgentView />}
-      {mainView === "vault"         && <VaultView />}
-      {mainView === "results"       && <ResultsView onRunComplete={runner.onRunComplete} onRerun={handleRerun} />}
-      {mainView === "git"           && <GitIntegrationPanel />}
-      {mainView === "integrations"  && <IntegrationsPanel url={disc.url} />}
-      {mainView === "testbed"       && <TestbedView />}
+
+      {nav === "discover" && (
+        <DiscoveryView disc={disc} onLaunchRun={handleLaunchRun} />
+      )}
+      {nav === "run" && (
+        <RunView
+          runner={runner} disc={disc}
+          activeTab={runTab} setActiveTab={setRunTab}
+          onBack={() => setNav("discover")}
+          onGoToResults={() => setNav("results")}
+        />
+      )}
+      {nav === "results" && (
+        <ResultsView
+          onRunComplete={runner.onRunComplete}
+          onRerun={handleRerun}
+        />
+      )}
+      {nav === "context" && (
+        <ContextView activeTab={ctxTab} setActiveTab={setCtxTab} url={disc.url} />
+      )}
+      {nav === "settings" && (
+        <SettingsView activeTab={setTab} setActiveTab={setSetTab} />
+      )}
     </div>
   );
 }
