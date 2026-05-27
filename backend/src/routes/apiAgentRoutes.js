@@ -115,6 +115,17 @@ async function buildScenariosRoute(req, res) {
     if (mode === "deep") send({ type:"log", msg:"  This may take 30-60s...", level:"info" });
 
     const scenarios = await buildScenarios(spec, credentials||{}, context, mode);
+    console.log(`[agent/build] Generated ${scenarios.length} scenario(s) for ${spec.title}`);
+
+    if (scenarios.length === 0) {
+      send({ type:"log", msg:"✗ Claude returned 0 scenarios — likely a JSON parse error. Check backend terminal.", level:"error" });
+      send({ type:"log", msg:"  Try again — this sometimes happens with very large specs (91 endpoints).", level:"warn" });
+      send({ type:"log", msg:"  Consider using 'Deep' mode which uses a higher token limit.", level:"info" });
+      send({ type:"error", msg:"No scenarios generated — Claude response could not be parsed" });
+      res.end();
+      return;
+    }
+
     send({ type:"log", msg:`✓ Generated ${scenarios.length} scenario(s)`, level:"success" });
 
     const suite = scenarioStore.saveSuite({

@@ -109,11 +109,21 @@ Aim for 80%+ endpoint coverage. Include:
 Group related scenarios. Prioritise Critical and High. Do not skip any endpoint group.`;
 
 export async function buildScenarios(spec, credentials = {}, context = "", mode = "quick") {
-  const endpointList = spec.endpoints
+  // For quick mode cap at 40 endpoints to avoid truncation
+  // For deep mode use all but warn if very large
+  const maxEndpoints = mode === "quick" ? 40 : 80;
+  const endpoints    = spec.endpoints?.slice(0, maxEndpoints) || [];
+
+  if (spec.endpoints?.length > maxEndpoints) {
+    console.log(`[ScenarioBuilder] Capped ${spec.endpoints.length} endpoints to ${maxEndpoints} for ${mode} mode`);
+  }
+
+  const cappedSpec = { ...spec, endpoints };
+  const endpointList = endpoints
     .map(e => `  [${e.method}] ${e.path}${e.summary ? ` — ${e.summary}` : ""}${e.tags?.length ? ` (${e.tags[0]})` : ""}`)
     .join("\n");
 
-  const groups = [...new Set(spec.endpoints.flatMap(e => e.tags || e.folder ? [e.tags?.[0] || e.folder] : ["default"]))];
+  const groups = [...new Set(endpoints.flatMap(e => e.tags || e.folder ? [e.tags?.[0] || e.folder] : ["default"]))];
   const groupList = groups.join(", ");
 
   const credNote = credentials.username
@@ -122,18 +132,18 @@ export async function buildScenarios(spec, credentials = {}, context = "", mode 
 
   // Build context block from all sources
   const contextParts = [];
-  if (context) contextParts.push(`Integration context (Jira/Confluence/Notion):\n${context.slice(0, 3000)}`);
+  if (context) contextParts.push(`Integration context (Jira/Confluence/Notion):\n${context.slice(0, 2000)}`);
   if (credentials.username) contextParts.push(credNote);
 
-  // Add schema hints for AI
-  const schemasWithExamples = spec.endpoints
+  // Add schema hints for AI — use capped endpoints
+  const schemasWithExamples = endpoints
     .filter(e => e.requestBody || e.responses)
-    .slice(0, 10)
+    .slice(0, 8)
     .map(e => {
       const parts = [`[${e.method}] ${e.path}:`];
-      if (e.requestBody) parts.push(`  body schema: ${JSON.stringify(e.requestBody).slice(0, 200)}`);
+      if (e.requestBody) parts.push(`  body schema: ${JSON.stringify(e.requestBody).slice(0, 150)}`);
       const resp200 = e.responses?.["200"] || e.responses?.["201"];
-      if (resp200?.schema) parts.push(`  response schema: ${JSON.stringify(resp200.schema).slice(0, 200)}`);
+      if (resp200?.schema) parts.push(`  response schema: ${JSON.stringify(resp200.schema).slice(0, 150)}`);
       return parts.join("\n");
     }).join("\n\n");
 
@@ -145,11 +155,12 @@ export async function buildScenarios(spec, credentials = {}, context = "", mode 
     ? `\n\n${contextParts.join("\n\n---\n\n")}\n`
     : "";
 
+  // Use cappedSpec in prompts so spec.endpoints.length is accurate
   const userPrompt = mode === "deep"
-    ? DEEP_PROMPT(spec, contextNote, endpointList, groupList)
-    : QUICK_PROMPT(spec, contextNote, endpointList);
+    ? DEEP_PROMPT(cappedSpec, contextNote, endpointList, groupList)
+    : QUICK_PROMPT(cappedSpec, contextNote, endpointList);
 
-  const maxTokens = mode === "deep" ? 12000 : 6000;
+  const maxTokens = mode === "deep" ? 12000 : 8000;
 
   const response = await client.messages.create({
     model:      config.model,
@@ -286,8 +297,18 @@ function generatePostmanTests(assertions = []) {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function extractJSONArray(raw) {
-  try { return JSON.parse(raw.trim()); } catch {}
+  if (!raw?.trim()) return [];
+
+  // Try direct parse
+  try { const r = JSON.parse(raw.trim()); return Array.isArray(r) ? r : (r.scenarios || r.tests || []); } catch {}
+
+  // Try extracting between first [ and last ]
   const s = raw.indexOf("["), e = raw.lastIndexOf("]");
-  if (s !== -1 && e > s) { try { return JSON.parse(raw.slice(s, e + 1)); } catch {} }
+  if (s !== -1 && e > s) {
+    try { const r = JSON.parse(raw.slice(s, e + 1)); return Array.isArray(r) ? r : []; } catch {}
+  }
+
+  // Last resort: try to find JSON objects in the text
+  console.error("[ScenarioBuilder] Failed to parse JSON array. Raw length:", raw.length, "First 200:", raw.slice(0,200));
   return [];
 }

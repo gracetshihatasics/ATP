@@ -510,19 +510,22 @@ export function ApiAgentView() {
               </div>
             )}
             {savedSuites.map(s => (
-              <div key={s.id} onClick={() => loadSuite(s)}
-                style={{ padding:"10px 12px", borderBottom:"0.5px solid #0d1a2a", cursor:"pointer" }}
-                onMouseEnter={e=>e.currentTarget.style.background="#0d1520"}
+              <div key={s.id}
+                style={{ padding:"10px 12px", borderBottom:"0.5px solid #0d1a2a", cursor: s.scenarioCount > 0 ? "pointer" : "default" }}
+                onClick={() => s.scenarioCount > 0 && loadSuite(s)}
+                onMouseEnter={e=>{ if(s.scenarioCount>0) e.currentTarget.style.background="#0d1520"; }}
                 onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                 <div style={{ display:"flex", alignItems:"flex-start", gap:6 }}>
                   <span style={{ fontSize:9, marginTop:1 }}>{s.mode==="deep"?"🔬":"⚡"}</span>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:10, color:"#b0c8e0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.specTitle}</div>
-                    <div style={{ fontSize:8, color:"#2d6aad" }}>{s.scenarioCount} scenarios · {s.mode}</div>
+                    <div style={{ fontSize:10, color: s.scenarioCount > 0 ? "#b0c8e0" : "#ff8c00", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.specTitle}</div>
+                    <div style={{ fontSize:8, color: s.scenarioCount > 0 ? "#2d6aad" : "#ff8c00" }}>
+                      {s.scenarioCount > 0 ? `${s.scenarioCount} scenarios · ${s.mode}` : "⚠ 0 scenarios — rebuild needed"}
+                    </div>
                     <div style={{ fontSize:8, color:"#1e3a5f" }}>{new Date(s.createdAt).toLocaleString()}</div>
                   </div>
                   <div style={{ display:"flex", gap:4, flexShrink:0 }}>
-                    {["json","postman","jest"].map(fmt => (
+                    {s.scenarioCount > 0 && ["json","postman","jest"].map(fmt => (
                       <button key={fmt} onClick={e=>{ e.stopPropagation(); exportSuite(s.id,fmt); }}
                         title={`Export as ${fmt}`}
                         style={{ background:"none", border:"0.5px solid #1e3a5f", borderRadius:3, color:"#2d6aad", cursor:"pointer", fontSize:7, padding:"2px 4px", fontFamily:"inherit" }}>
@@ -530,9 +533,9 @@ export function ApiAgentView() {
                       </button>
                     ))}
                     <button onClick={e=>deleteSuite(s.id,e)}
-                      style={{ background:"none", border:"none", color:"#3a1a1a", cursor:"pointer", fontSize:11, padding:"0 2px", fontFamily:"inherit" }}
+                      style={{ background:"none", border:"none", color:"#3a2020", cursor:"pointer", fontSize:11, padding:"0 2px", fontFamily:"inherit" }}
                       onMouseEnter={e=>e.currentTarget.style.color="#ff6b6b"}
-                      onMouseLeave={e=>e.currentTarget.style.color="#3a1a1a"}>
+                      onMouseLeave={e=>e.currentTarget.style.color="#3a2020"}>
                       ✕
                     </button>
                   </div>
