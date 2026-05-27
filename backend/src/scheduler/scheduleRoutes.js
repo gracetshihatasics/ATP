@@ -1,3 +1,4 @@
+import { handle, sendSSEError, ATPError, ErrorType, logError } from "../utils/errors.js";
 import { scheduleStore, calcNextRun, CRON_PRESETS, sendSlackNotification, buildSlackMessage } from "./scheduleStore.js";
 import { startScheduler } from "./scheduleRunner.js";
 
@@ -27,7 +28,7 @@ export function scheduleRoutes(app) {
             slack, suiteFilter = "all", maxTests = 20 } = req.body;
 
     if (!name || !url || !cron) {
-      return res.status(400).json({ error: "name, url, cron required" });
+      return res.status(400).json({ ok:false, error:"name, url, cron required", type:"validation" });
     }
 
     const entry = scheduleStore.save({
@@ -92,7 +93,7 @@ export function scheduleRoutes(app) {
   // ── Test Slack webhook ────────────────────────────────────────────────────
   app.post("/api/schedules/test-slack", async (req, res) => {
     const { webhookUrl } = req.body;
-    if (!webhookUrl) return res.status(400).json({ error: "webhookUrl required" });
+    if (!webhookUrl) return res.status(400).json({ ok:false, error:"webhookUrl required", type:"validation" });
 
     try {
       await sendSlackNotification(webhookUrl, {
@@ -104,7 +105,7 @@ export function scheduleRoutes(app) {
       });
       res.json({ ok: true });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 

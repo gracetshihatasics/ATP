@@ -1,3 +1,4 @@
+import { handle, sendSSEError, ATPError, ErrorType, logError } from "../utils/errors.js";
 import crypto from "crypto";
 import { readRepoTestSuite, listAccessibleRepos, createFileInRepo, createBranch, openPullRequest } from "./repoReader.js";
 import { analyseTestSuite, suiteToContext } from "./suiteContextBuilder.js";
@@ -34,7 +35,7 @@ export function testbedRoutes(app) {
   // ── Connect a GitHub repo as a test suite ─────────────────────────────────
   app.post("/api/testbed/suites/connect", async (req, res) => {
     const { repoFullName, branch, name, token } = req.body;
-    if (!repoFullName) return res.status(400).json({ error: "repoFullName required" });
+    if (!repoFullName) return res.status(400).json({ ok:false, error:"repoFullName required", type:"validation" });
 
     // SSE for live progress
     res.setHeader("Content-Type",  "text/event-stream");
@@ -94,7 +95,7 @@ export function testbedRoutes(app) {
   app.post("/api/testbed/suites/:id/sync", async (req, res) => {
     const existing = testbedStore.getSuite(req.params.id);
     if (!existing)    return res.status(404).json({ error: "Not found" });
-    if (!existing.repoFullName) return res.status(400).json({ error: "No repo connected to this suite" });
+    if (!existing.repoFullName) return res.status(400).json({ ok:false, error:"No repo connected to this suite", type:"validation" });
 
     try {
       const suite    = await readRepoTestSuite(existing.repoFullName, { branch: existing.branch });
@@ -102,7 +103,7 @@ export function testbedRoutes(app) {
       const saved    = testbedStore.saveSuite({ ...existing, ...suite, analysis, lastScanned: new Date().toISOString() });
       res.json({ ok: true, suite: saved });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
@@ -122,7 +123,7 @@ export function testbedRoutes(app) {
   // ── Generate a new test file ──────────────────────────────────────────────
   app.post("/api/testbed/generate", async (req, res) => {
     const { useCase, suiteId, url, diff } = req.body;
-    if (!useCase) return res.status(400).json({ error: "useCase required" });
+    if (!useCase) return res.status(400).json({ ok:false, error:"useCase required", type:"validation" });
 
     const suite    = suiteId ? testbedStore.getSuite(suiteId) : getDefaultSuite();
     const analysis = suite?.analysis || null;
@@ -132,7 +133,7 @@ export function testbedRoutes(app) {
       const saved  = testbedStore.saveGeneratedTest({ ...result, suiteId, url, generatedFor: useCase.id });
       res.json({ ok: true, test: saved });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
@@ -219,7 +220,7 @@ export function testbedRoutes(app) {
   // ── Modify an existing test file ──────────────────────────────────────────
   app.post("/api/testbed/modify", async (req, res) => {
     const { suiteId, testFilePath, diff, reason } = req.body;
-    if (!suiteId || !testFilePath || !diff) return res.status(400).json({ error: "suiteId, testFilePath, diff required" });
+    if (!suiteId || !testFilePath || !diff) return res.status(400).json({ ok:false, error:"suiteId, testFilePath, diff required", type:"validation" });
 
     const suite    = testbedStore.getSuite(suiteId);
     if (!suite)    return res.status(404).json({ error: "Suite not found" });
@@ -230,7 +231,7 @@ export function testbedRoutes(app) {
       const result = await modifyTestFile({ testFile, diff, reason, suite, analysis: suite.analysis });
       res.json({ ok: true, ...result });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
@@ -317,7 +318,7 @@ export function testbedExportRoutes(app) {
   // Generate full test project from a discovery plan — SSE stream
   app.post("/api/testbed/export", async (req, res) => {
     const { plan, url, suiteId } = req.body;
-    if (!plan || !url) return res.status(400).json({ error: "plan and url required" });
+    if (!plan || !url) return res.status(400).json({ ok:false, error:"plan and url required", type:"validation" });
 
     res.setHeader("Content-Type",  "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -357,7 +358,7 @@ export function testbedExportRoutes(app) {
   // Push project to GitHub
   app.post("/api/testbed/projects/:id/push", async (req, res) => {
     const { targetRepo, targetBranch, baseBranch = "main", createPR = true } = req.body;
-    if (!targetRepo) return res.status(400).json({ error: "targetRepo required" });
+    if (!targetRepo) return res.status(400).json({ ok:false, error:"targetRepo required", type:"validation" });
 
     const project = testbedStore.getProject(req.params.id);
     if (!project) return res.status(404).json({ error: "Project not found" });

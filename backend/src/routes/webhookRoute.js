@@ -1,3 +1,4 @@
+import { handle, sendSSEError, ATPError, ErrorType, logError } from "../utils/errors.js";
 import { verifyWebhookSignature, parseWebhookEvent, fetchPRFiles } from "../git/webhookHandler.js";
 import { analyseDiff, updateTestsFromDiff }   from "../git/diffAnalyser.js";
 import { postCommitStatus, postPRComment }    from "../git/prReporter.js";
@@ -65,7 +66,7 @@ export function webhookRoutes(app) {
   // ── Verify GitHub token ──────────────────────────────────────────────────────
   app.post("/api/git/verify-token", async (req, res) => {
     const { token } = req.body;
-    if (!token) return res.status(400).json({ error: "token required" });
+    if (!token) return res.status(400).json({ ok:false, error:"token required", type:"validation" });
     try {
       const r = await fetch("https://api.github.com/user", {
         headers: { Authorization: `Bearer ${token}`, "User-Agent": "ATP-Bot" },
@@ -109,7 +110,7 @@ export function webhookRoutes(app) {
   // ── Manual trigger ───────────────────────────────────────────────────────────
   app.post("/api/git/trigger", async (req, res) => {
     const { repoFullName, prNumber = 1, branchFrom = "feature", branchTo = "main", prTitle = "Manual trigger", author = "manual" } = req.body;
-    if (!repoFullName) return res.status(400).json({ error: "repoFullName required" });
+    if (!repoFullName) return res.status(400).json({ ok:false, error:"repoFullName required", type:"validation" });
     const prEvent = {
       kind: "pull_request", action: "synchronize",
       prNumber, prTitle, branchFrom, branchTo,

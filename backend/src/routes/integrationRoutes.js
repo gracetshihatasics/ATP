@@ -1,3 +1,4 @@
+import { handle, sendSSEError, ATPError, ErrorType, logError } from "../utils/errors.js";
 import { integrationStore } from "../integrations/integrationStore.js";
 import { syncIntegration, buildContext, extractTestData } from "../integrations/contextBuilder.js";
 import { validateTestAgainstContext } from "../integrations/testContextValidator.js";
@@ -40,7 +41,7 @@ export function integrationRoutes(app) {
       res.json({ ok: true, data, summary: data.summary });
     } catch (err) {
       integrationStore.updateStatus(req.params.id, "error", err.message);
-      res.status(400).json({ ok: false, error: err.message });
+      res.status(400).json({ ok:false, error:err.message, type:"validation" });
     }
   });
 
@@ -51,7 +52,7 @@ export function integrationRoutes(app) {
       const ctx = await buildContext(url || "", goal || "");
       res.json({ ok: true, context: ctx });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
@@ -63,7 +64,7 @@ export function integrationRoutes(app) {
       const result = await extractTestData(ctx, useCase);
       res.json({ ok: true, ...result });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
@@ -75,7 +76,7 @@ export function integrationRoutes(app) {
       const result = await validateTestAgainstContext(run);
       res.json({ ok: true, validation: result });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
@@ -185,7 +186,7 @@ export function mcpRoutes(app) {
       fs.writeFileSync(configPath, JSON.stringify(existing, null, 2), "utf8");
       res.json({ ok: true, configPath, message: "ATP added to Claude Desktop. Restart Claude Desktop to apply." });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 }

@@ -1,3 +1,4 @@
+import { handle, sendSSEError, ATPError, ErrorType, logError } from "../utils/errors.js";
 import { vaultStore } from "./store.js";
 
 export function vaultRoutes(app) {
@@ -16,7 +17,7 @@ export function vaultRoutes(app) {
   // Find for URL
   app.get("/api/vault/match", (req, res) => {
     const { url } = req.query;
-    if (!url) return res.status(400).json({ error: "url required" });
+    if (!url) return res.status(400).json({ ok:false, error:"url required", type:"validation" });
     res.json({ ok: true, credential: vaultStore.findForUrl(url) });
   });
 
@@ -29,7 +30,7 @@ export function vaultRoutes(app) {
   // ── Single credential ───────────────────────────────────────────────────────
   app.post("/api/vault", (req, res) => {
     const { name, environment, type, url, fields } = req.body;
-    if (!name) return res.status(400).json({ error: "name is required" });
+    if (!name) return res.status(400).json({ ok:false, error:"name is required", type:"validation" });
     res.json({ ok: true, credential: vaultStore.create({ name, environment, type, url, fields }) });
   });
 
@@ -47,7 +48,7 @@ export function vaultRoutes(app) {
   // ── Credential sets ─────────────────────────────────────────────────────────
   app.post("/api/vault/sets", (req, res) => {
     const { name, environment, url, users } = req.body;
-    if (!name) return res.status(400).json({ error: "name is required" });
+    if (!name) return res.status(400).json({ ok:false, error:"name is required", type:"validation" });
     res.json({ ok: true, credential: vaultStore.createSet({ name, environment, url, users }) });
   });
 

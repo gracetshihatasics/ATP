@@ -1,3 +1,4 @@
+import { handle, sendSSEError, ATPError, ErrorType, logError } from "../utils/errors.js";
 import https  from "https";
 import { config } from "../config/index.js";
 
@@ -68,7 +69,7 @@ function extractJSON(raw) {
 
 export async function discoverRoute(req, res) {
   const { url, username, password, credentialId } = req.body;
-  if (!url) return res.status(400).json({ error: "url is required" });
+  if (!url) return res.status(400).json({ ok:false, error:"url is required", type:"validation" });
 
   if (!config.apiKey || config.apiKey.length < 10) {
     return res.status(500).json({ error: "ANTHROPIC_API_KEY not set in backend/.env" });
@@ -102,13 +103,13 @@ export async function discoverRoute(req, res) {
 
   } catch (err) {
     console.error("[discover] Error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ ok:false, error:err.message, type:"internal" });
   }
 }
 
 export async function scenarioRoute(req, res) {
   const { useCase } = req.body;
-  if (!useCase) return res.status(400).json({ error: "useCase is required" });
+  if (!useCase) return res.status(400).json({ ok:false, error:"useCase is required", type:"validation" });
 
   try {
     const content  = `Use case: ${useCase.title}\nSteps:\n${useCase.steps?.map((s,i) => `${i+1}. ${s}`).join("\n") || ""}`;
@@ -118,6 +119,6 @@ export async function scenarioRoute(req, res) {
     res.json({ ok: true, scenario });
   } catch (err) {
     console.error("[scenario] Error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ ok:false, error:err.message, type:"internal" });
   }
 }

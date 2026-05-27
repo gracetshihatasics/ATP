@@ -1,3 +1,4 @@
+import { handle, sendSSEError, ATPError, ErrorType, logError } from "../utils/errors.js";
 import { resultsStore }              from "../results/store.js";
 import { toJUnitXML, toAllureJSON, toJSONSummary } from "../results/ciExport.js";
 import { analyseFailure, analyseSuite } from "../results/failureAnalyser.js";
@@ -23,7 +24,7 @@ export function resultsRoutes(app) {
   // ── Trend for one test ─────────────────────────────────────────────────────
   app.get("/api/results/trend", (req, res) => {
     const { name, days } = req.query;
-    if (!name) return res.status(400).json({ error: "name required" });
+    if (!name) return res.status(400).json({ ok:false, error:"name required", type:"validation" });
     res.json({ ok: true, trend: resultsStore.getTrend(name, parseInt(days) || 14) });
   });
 
@@ -80,20 +81,20 @@ export function resultsRoutes(app) {
       const analysis = await analyseFailure(run);
       res.json({ ok: true, analysis });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
   // ── AI suite analysis ──────────────────────────────────────────────────────
   app.post("/api/results/analyse-suite", async (req, res) => {
     const { runIds } = req.body;
-    if (!runIds?.length) return res.status(400).json({ error: "runIds required" });
+    if (!runIds?.length) return res.status(400).json({ ok:false, error:"runIds required", type:"validation" });
     const runs = runIds.map(id => resultsStore.getById(id)).filter(Boolean);
     try {
       const insight = await analyseSuite(runs);
       res.json({ ok: true, insight });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok:false, error:err.message, type:"internal" });
     }
   });
 
