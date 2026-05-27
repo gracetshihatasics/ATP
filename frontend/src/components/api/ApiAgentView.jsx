@@ -176,7 +176,11 @@ export function ApiAgentView() {
             setActiveTab("scenarios");
             await loadSuites();
           }
-          if (evt.type === "error") { addLog(`✗ ${evt.msg}`, "error"); setPhase("ready"); }
+          if (evt.type === "error") {
+            addLog(`✗ Error: ${evt.msg}`, "error");
+            addLog("Check backend terminal for details", "warn");
+            setPhase("ready");
+          }
         } catch {}
       }
     }
@@ -256,8 +260,9 @@ export function ApiAgentView() {
     }
   };
 
-  const ready   = phase === "done" && scenarios.length > 0;
-  const running = phase === "running";
+  const ready   = scenarios.length > 0;
+  const canBuild = !!spec && phase !== "building" && phase !== "importing" && phase !== "running";
+  const running  = phase === "running";
   const canImport = manualMode
     ? (manualType === "swagger" ? !!swaggerUrl : !!postmanJson)
     : (selectedSrc && (selectedSrc.type !== "postman" || !!collection));
@@ -400,34 +405,43 @@ export function ApiAgentView() {
 
             {/* Actions */}
             <div style={{ padding:"10px 14px" }}>
-              {/* Step 1: Load spec */}
-              {phase !== "ready" && phase !== "building" && phase !== "done" && (
-                <button onClick={importSpec} disabled={!canImport || running || phase==="importing"}
-                  style={{ width:"100%", background:canImport&&!running?"linear-gradient(135deg,#1a3050,#0d1a30)":"#0a0e12", border:`0.5px solid ${canImport&&!running?"#4d9de0":"#1e3a5f"}`, borderRadius:6, color:canImport&&!running?"#7ec8ff":"#2d6aad", cursor:canImport&&!running?"pointer":"default", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit", letterSpacing:"0.05em", marginBottom:6 }}>
+
+              {/* Always show load button when no spec yet */}
+              {!spec && (
+                <button onClick={importSpec} disabled={!canImport || phase==="importing"}
+                  style={{ width:"100%", background:canImport?"linear-gradient(135deg,#1a3050,#0d1a30)":"#0a0e12", border:`0.5px solid ${canImport?"#4d9de0":"#1e3a5f"}`, borderRadius:6, color:canImport?"#7ec8ff":"#2d6aad", cursor:canImport?"pointer":"default", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit", letterSpacing:"0.05em", marginBottom:6 }}>
                   {phase==="importing" ? "◈ Loading spec..." : "① Load API Spec"}
                 </button>
               )}
 
-              {/* Step 2: Build scenarios */}
-              {(phase === "ready" || phase === "done") && (
+              {/* Spec loaded — show card + build button */}
+              {spec && (
                 <>
-                  {spec && (
-                    <div style={{ fontSize:9, color:"#4a7fa5", marginBottom:6, padding:"5px 8px", background:"#0a0e12", borderRadius:4 }}>
-                      {spec.title} · {spec.endpoints?.length} endpoints
+                  <div style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 10px", background:"#0a0e12", borderRadius:5, marginBottom:8, border:"0.5px solid #1e3a5f" }}>
+                    <span style={{ fontSize:10, color:"#4caf50" }}>✓</span>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:10, color:"#b0d0f0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{spec.title}</div>
+                      <div style={{ fontSize:8, color:"#2d6aad" }}>{spec.endpoints?.length} endpoints · {spec.source}</div>
                     </div>
-                  )}
-                  <button onClick={buildScenarios} disabled={running || phase==="building"}
-                    style={{ width:"100%", background:running?"#0a0e12":`linear-gradient(135deg,${mode==="deep"?"#1a0a2e,#0a0a1e":"#1a0a2e,#0a1020"})`, border:`0.5px solid ${running?"#1e3a5f":mode==="deep"?"#c8a0f0":"#5b3a8a"}`, borderRadius:6, color:running?"#2d6aad":mode==="deep"?"#c8a0f0":"#a080d0", cursor:running?"default":"pointer", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit", letterSpacing:"0.05em", marginBottom:6 }}>
-                    {phase==="building" ? `◈ ${mode==="deep"?"Deep scanning...":"Building..."}` : `② ${mode==="deep"?"🔬 Deep":"⚡ Quick"} — Build Scenarios`}
+                    <button onClick={() => { setSpec(null); setScenarios([]); setSuiteId(null); setPhase("idle"); setLog([]); setRunResults({}); }}
+                      style={{ background:"none", border:"none", color:"#4a7fa5", cursor:"pointer", fontSize:13, padding:"0", lineHeight:1, fontFamily:"inherit" }}>×</button>
+                  </div>
+
+                  <button onClick={buildScenarios} disabled={phase==="building" || phase==="importing" || phase==="running"}
+                    style={{ width:"100%", background:phase==="building"?"#0a0e12":`linear-gradient(135deg,${mode==="deep"?"#1a0a2e,#0a0a1e":"#1a0a2e,#0a1020"})`, border:`0.5px solid ${phase==="building"?"#1e3a5f":mode==="deep"?"#c8a0f0":"#5b3a8a"}`, borderRadius:6, color:phase==="building"?"#4a7fa5":mode==="deep"?"#c8a0f0":"#a080d0", cursor:phase==="building"?"default":"pointer", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit", letterSpacing:"0.05em", marginBottom:6 }}>
+                    {phase==="building"
+                      ? `◈ ${mode==="deep"?"Deep scan (30-60s)...":"Building 7 scenarios..."}`
+                      : `② ${mode==="deep"?"🔬 Deep — Full Coverage":"⚡ Quick — 7 CI Scenarios"}`
+                    }
                   </button>
                 </>
               )}
 
-              {/* Step 3: Run */}
-              {ready && (
-                <button onClick={runAll} disabled={running}
-                  style={{ width:"100%", background:running?"#0a0e12":"linear-gradient(135deg,#0a1a0a,#0a0e12)", border:`0.5px solid ${running?"#1e3a5f":"#4caf50"}`, borderRadius:6, color:running?"#2d6aad":"#4caf50", cursor:running?"default":"pointer", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit" }}>
-                  {running ? "◈ Running..." : `③ Run ${filter==="all"?scenarios.length:visibleScenarios.length} Scenario(s)`}
+              {/* Run button — only when scenarios exist */}
+              {scenarios.length > 0 && phase !== "building" && (
+                <button onClick={runAll} disabled={phase==="running"}
+                  style={{ width:"100%", background:phase==="running"?"#0a0e12":"linear-gradient(135deg,#0a1a0a,#0a0e12)", border:`0.5px solid ${phase==="running"?"#1e3a5f":"#4caf50"}`, borderRadius:6, color:phase==="running"?"#2d6aad":"#4caf50", cursor:phase==="running"?"default":"pointer", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit" }}>
+                  {phase==="running" ? "◈ Running..." : `③ Run ${filter==="all"?scenarios.length:visibleScenarios.length} Scenario(s)`}
                 </button>
               )}
 
@@ -465,8 +479,11 @@ export function ApiAgentView() {
             </div>
 
             {/* Log */}
-            <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column", borderTop:"0.5px solid #1e3a5f", minHeight:80 }}>
-              <div style={{ fontSize:8, color:"#1e3a5f", padding:"3px 12px", textTransform:"uppercase", letterSpacing:"0.1em" }}>Log</div>
+            <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column", borderTop:"0.5px solid #1e3a5f", minHeight: phase === "building" ? 160 : 80 }}>
+              <div style={{ fontSize:8, color:"#1e3a5f", padding:"3px 12px", textTransform:"uppercase", letterSpacing:"0.1em", display:"flex", justifyContent:"space-between" }}>
+                <span>Log {phase==="building"&&<span style={{ color:"#c8a0f0" }}>● live</span>}</span>
+                {log.length > 0 && <button onClick={() => setLog([])} style={{ background:"none", border:"none", color:"#1e3a5f", cursor:"pointer", fontSize:8, padding:0, fontFamily:"inherit" }}>clear</button>}
+              </div>
               <div ref={logRef} style={{ flex:1, overflowY:"auto", padding:"2px 10px 8px" }}>
                 {log.map((l,i) => (
                   <div key={i} style={{ fontSize:9, marginBottom:2, lineHeight:1.5,
