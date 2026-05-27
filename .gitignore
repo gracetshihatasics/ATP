@@ -28,3 +28,4 @@ Thumbs.db
 .testbed.json
 .urls.json
 .schedules.json
+.api-scenarios.json
