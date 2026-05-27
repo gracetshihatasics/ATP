@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
+
 import { config } from "../config/index.js";
 
-const client = new Anthropic({ apiKey: config.apiKey });
+import { anthropic as client } from "../ai/client.js";
 
 const SYSTEM = `You are an expert API test architect. Given an API spec, build realistic multi-step business transaction test scenarios.
 
@@ -47,14 +47,18 @@ Rules:
  * @param {{ username?: string, password?: string }} credentials
  * @returns {Promise<object[]>}
  */
-export async function buildScenarios(spec, credentials = {}) {
+export async function buildScenarios(spec, credentials = {}, context = "") {
   const endpointSummary = spec.endpoints
-    .slice(0, 40) // cap to avoid token limits
+    .slice(0, 40)
     .map(e => `${e.method} ${e.path} — ${e.summary || e.description}`)
     .join("\n");
 
   const credNote = credentials.username
     ? `\nTest credentials: username="${credentials.username}", password="${credentials.password}"`
+    : "";
+
+  const contextNote = context
+    ? `\n\nIntegration context (Jira, Confluence, etc.):\n${context.slice(0, 2000)}`
     : "";
 
   const response = await client.messages.create({
@@ -65,7 +69,7 @@ export async function buildScenarios(spec, credentials = {}) {
       role:    "user",
       content: `API: ${spec.title} (${spec.source})
 Base URL: ${spec.baseUrl || "provided at runtime"}
-Description: ${spec.description}${credNote}
+Description: ${spec.description}${credNote}${contextNote}
 
 Endpoints:
 ${endpointSummary}

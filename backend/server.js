@@ -11,25 +11,22 @@ if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 }
 import { config }  from "./src/config/index.js";
-import { messageRouter } from "./src/ws/messageRouter.js";
+import { messageRouter }  from "./src/ws/messageRouter.js";
 import { sessionManager } from "./src/ws/sessionManager.js";
-import { send }    from "./src/ws/send.js";
-import { discoverRoute, scenarioRoute } from "./src/routes/aiRoutes.js";
-import { advancedDiscoverRoute }        from "./src/routes/advancedDiscoveryRoute.js";
-import { codeIntelligenceRoute }        from "./src/routes/codeIntelligenceRoute.js";
-import {
-  importSpecRoute,
-  buildScenariosRoute,
-  runScenarioRoute,
-  runAllScenariosRoute,
-  getResultsRoute,
-} from "./src/routes/apiAgentRoutes.js";
-import { vaultRoutes }        from "./src/vault/vaultRoutes.js";
-import { resultsRoutes }      from "./src/results/routes.js";
-import { webhookRoutes }      from "./src/routes/webhookRoute.js";
-import { integrationRoutes, mcpRoutes } from "./src/routes/integrationRoutes.js";
+import { send }           from "./src/ws/send.js";
+import { discoverRoute, scenarioRoute }  from "./src/routes/aiRoutes.js";
+import { advancedDiscoverRoute }         from "./src/routes/advancedDiscoveryRoute.js";
+import { codeIntelligenceRoute }         from "./src/routes/codeIntelligenceRoute.js";
+import { apiAgentRoutes }                from "./src/routes/apiAgentRoutes.js";
+import { vaultRoutes }                   from "./src/vault/vaultRoutes.js";
+import { resultsRoutes }                 from "./src/results/routes.js";
+import { webhookRoutes }                 from "./src/routes/webhookRoute.js";
+import { integrationRoutes, mcpRoutes }  from "./src/routes/integrationRoutes.js";
 import { testbedRoutes, testbedExportRoutes } from "./src/testbed/testbedRoutes.js";
-import { urlRoutes }                          from "./src/routes/urlStore.js";
+import { urlRoutes }                     from "./src/routes/urlStore.js";
+import { scheduleRoutes }                from "./src/scheduler/scheduleRoutes.js";
+import { startScheduler }                from "./src/scheduler/scheduleRunner.js";
+import { integrationStore }              from "./src/integrations/integrationStore.js";
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 const app = express();
@@ -96,11 +93,8 @@ app.post("/api/code-intelligence",    codeIntelligenceRoute);
 app.post("/api/scenario",             scenarioRoute);
 
 // API Agent routes
-app.post("/api/agent/import",         importSpecRoute);
-app.post("/api/agent/build",          buildScenariosRoute);
-app.post("/api/agent/run",            runScenarioRoute);
-app.post("/api/agent/run-all",        runAllScenariosRoute);
-app.get( "/api/agent/results/:runId", getResultsRoute);
+// API Agent routes
+apiAgentRoutes(app);
 
 // Vault routes
 vaultRoutes(app);
@@ -121,6 +115,17 @@ testbedExportRoutes(app);
 
 // URL store
 urlRoutes(app);
+
+// Scheduler
+scheduleRoutes(app);
+
+// Start the scheduler tick (checks every 60s for due runs)
+startScheduler();
+
+// Log stored data counts on startup
+setTimeout(() => {
+  console.log(`[ATP] Integrations: ${integrationStore.count()} stored`);
+}, 500);
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });

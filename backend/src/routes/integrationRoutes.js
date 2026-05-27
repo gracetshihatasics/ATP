@@ -9,19 +9,11 @@ export function integrationRoutes(app) {
     res.json({ ok: true, integrations: integrationStore.list() });
   });
 
-  // ── Get one integration (masked secrets) ───────────────────────────────────
+  // ── Get one integration (sensitive fields masked, URLs shown) ────────────────
   app.get("/api/integrations/:id", (req, res) => {
-    const int = integrationStore.get(req.params.id);
+    const int = integrationStore.getForDisplay(req.params.id);
     if (!int) return res.status(404).json({ error: "Not found" });
-    // Mask secrets before sending
-    const masked = { ...int, config: Object.fromEntries(
-      Object.entries(int.config).map(([k, v]) =>
-        ["password","apiToken","token","secret","connectionString"].some(s => k.toLowerCase().includes(s))
-          ? [k, v ? "••••••••" : ""]
-          : [k, v]
-      )
-    )};
-    res.json({ ok: true, integration: masked });
+    res.json({ ok: true, integration: int });
   });
 
   // ── Save integration ───────────────────────────────────────────────────────

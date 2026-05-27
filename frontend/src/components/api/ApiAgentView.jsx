@@ -1,293 +1,510 @@
-import { useState } from "react";
-import { useApiAgent }        from "../../hooks/useApiAgent.js";
-import { LogPanel }           from "../shared/LogPanel.jsx";
-import { CredentialPicker }   from "../shared/CredentialPicker.jsx";
-import { resolveContext }     from "../../services/vault.js";
-import { METHOD_COLORS, PRIORITY_COLORS } from "../../constants/theme.js";
+import { useState, useEffect, useRef } from "react";
+import { CredentialPicker } from "../shared/CredentialPicker.jsx";
+import { resolveContext }   from "../../services/vault.js";
+import { METHOD_COLORS }    from "../../constants/theme.js";
+
+const BACKEND = "http://localhost:3579";
+
+const STATUS_C = {
+  pass:  { color:"#4caf50", bg:"#0a1a0a", icon:"✓" },
+  fail:  { color:"#ff3b3b", bg:"#1a0808", icon:"✗" },
+  error: { color:"#ff8c00", bg:"#1a0f00", icon:"⚠" },
+};
 
 export function ApiAgentView() {
-  const agent = useApiAgent();
-  const [swaggerUrl, setSwaggerUrl]     = useState("");
-  const [postmanText, setPostmanText]   = useState("");
-  const [baseUrl, setBaseUrl]           = useState("");
-  const [inputMode, setInputMode]       = useState("swagger");
+  // ── Source selection ──────────────────────────────────────────────────────
+  const [sources,       setSources]       = useState([]);
+  const [loadingSrc,    setLoadingSrc]    = useState(true);
+  const [selectedSrc,   setSelectedSrc]  = useState(null);  // integration source object
+  const [collection,    setCollection]   = useState(null);  // { id, name } for Postman
+  const [colSearch,     setColSearch]    = useState("");
+  const [showColPicker, setShowColPicker] = useState(false);
+
+  // ── Manual fallback ───────────────────────────────────────────────────────
+  const [manualMode,   setManualMode]   = useState(false);
+  const [swaggerUrl,   setSwaggerUrl]   = useState("");
+  const [postmanJson,  setPostmanJson]  = useState("");
+  const [manualType,   setManualType]   = useState("swagger");
+  const [baseUrl,      setBaseUrl]      = useState("");
+
+  // ── Spec + scenarios ──────────────────────────────────────────────────────
+  const [spec,         setSpec]         = useState(null);
+  const [scenarios,    setScenarios]    = useState([]);
+  const [filter,       setFilter]       = useState("all");
+  const [contextUsed,  setContextUsed]  = useState(false);
   const [credentialId, setCredentialId] = useState(null);
-  const [activeTab, setActiveTab]       = useState("scenarios");
 
-  const { phase, log, logRef, spec, scenarios, selectedScenario,
-    setSelectedScenario, runResults, activeStep, captures, suiteResult,
-    doImport, doBuild, doRunScenario, doRunAll } = agent;
+  // ── Run state ─────────────────────────────────────────────────────────────
+  const [phase,        setPhase]        = useState("idle"); // idle|importing|building|running|done
+  const [log,          setLog]          = useState([]);
+  const [selected,     setSelected]     = useState(null);
+  const [runResults,   setRunResults]   = useState({});  // scenarioName → result
+  const [suiteResult,  setSuiteResult]  = useState(null);
+  const [activeTab,    setActiveTab]    = useState("scenarios");
+  const logRef = useRef(null);
 
-  const resolveAndRun = async (fn) => {
-    let credentials = {};
-    if (credentialId) {
-      credentials = await resolveContext(credentialId);
+  useEffect(() => { loadSources(); }, []);
+  useEffect(() => {
+    setTimeout(() => logRef.current?.scrollTo({ top:99999, behavior:"smooth" }), 50);
+  }, [log.length]);
+
+  const addLog = (msg, level="info") => setLog(p => [...p, { msg, level, ts:Date.now() }]);
+
+  const loadSources = async () => {
+    setLoadingSrc(true);
+    try {
+      const res  = await fetch(`${BACKEND}/api/agent/sources`);
+      const data = await res.json();
+      setSources(data.sources || []);
+    } catch {} finally { setLoadingSrc(false); }
+  };
+
+  // ── Collection typeahead ──────────────────────────────────────────────────
+  const filteredCols = (selectedSrc?.collections || []).filter(c =>
+    !colSearch || c.name.toLowerCase().includes(colSearch.toLowerCase())
+  );
+
+  // ── Import + Build ────────────────────────────────────────────────────────
+  const importAndBuild = async () => {
+    setPhase("importing"); setLog([]); setSpec(null); setScenarios([]); setSuiteResult(null); setRunResults({});
+
+    try {
+      // 1. Import spec
+      addLog(selectedSrc
+        ? `◈ Loading from ${selectedSrc.name}${collection ? ` → ${collection.name}` : ""}...`
+        : "◈ Fetching spec...", "ai");
+
+      const importBody = selectedSrc
+        ? { integrationId: selectedSrc.integrationId, collectionId: collection?.id }
+        : manualType === "swagger" ? { swaggerUrl, baseUrl } : { postmanJson, baseUrl };
+
+      const impRes  = await fetch(`${BACKEND}/api/agent/import`, {
+        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(importBody),
+      });
+      const impData = await impRes.json();
+      if (!impData.ok) throw new Error(impData.error);
+      const spec = impData.spec;
+      setSpec(spec);
+      addLog(`✓ Spec loaded — ${spec.endpoints?.length || 0} endpoint(s)`, "success");
+      addLog(`Base URL: ${spec.baseUrl}`, "info");
+
+      // 2. Build scenarios with context
+      setPhase("building");
+      addLog("◈ Building test scenarios with context injection...", "ai");
+      addLog("  Pulling Jira stories, Confluence docs, integration context...", "info");
+
+      const buildRes  = await fetch(`${BACKEND}/api/agent/build`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ spec, url: spec.baseUrl, filter }),
+      });
+      const buildData = await buildRes.json();
+      if (!buildData.ok) throw new Error(buildData.error);
+
+      setScenarios(buildData.scenarios || []);
+      setContextUsed(buildData.contextUsed || false);
+      setPhase("done");
+      setActiveTab("scenarios");
+      addLog(`✓ ${buildData.scenarios?.length || 0} scenario(s) generated`, "success");
+      if (buildData.contextUsed) addLog("  Context from integrations injected ✓", "ai");
+
+    } catch (err) {
+      addLog(`✗ ${err.message}`, "error");
+      setPhase("idle");
     }
-    fn(credentials);
   };
 
-  const handleImport = () => {
-    doImport({
-      swaggerUrl:  inputMode === "swagger" ? swaggerUrl : undefined,
-      postmanJson: inputMode === "postman" ? postmanText : undefined,
-      baseUrl,
+  // ── Run one scenario ──────────────────────────────────────────────────────
+  const runOne = async (scenario) => {
+    setSelected(scenario);
+    setPhase("running");
+    setRunResults(p => ({ ...p, [scenario.name]: { status:"running" } }));
+    addLog(`▶ Running: ${scenario.name}`, "system");
+
+    let credentials = {};
+    if (credentialId) credentials = await resolveContext(credentialId);
+
+    const res     = await fetch(`${BACKEND}/api/agent/run`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ scenario, spec, credentials }),
     });
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream:true });
+      const lines = buf.split("\n"); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === "log")  addLog(evt.msg, evt.level);
+          if (evt.type === "step") addLog(`  ${evt.status==="pass"?"✓":"✗"} ${evt.description}`, evt.status==="pass"?"success":"error");
+          if (evt.type === "done") {
+            setRunResults(p => ({ ...p, [scenario.name]: evt.result }));
+            setPhase("done");
+          }
+        } catch {}
+      }
+    }
   };
 
-  const running = phase === "running";
-  const ready   = phase === "ready";
+  // ── Run all ───────────────────────────────────────────────────────────────
+  const runAll = async () => {
+    setPhase("running");
+    setSuiteResult(null);
+    addLog(`▶ Running all ${scenarios.length} scenario(s)...`, "system");
 
+    let credentials = {};
+    if (credentialId) credentials = await resolveContext(credentialId);
+
+    const res     = await fetch(`${BACKEND}/api/agent/run-all`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ scenarios, spec, credentials, filter }),
+    });
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream:true });
+      const lines = buf.split("\n"); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === "log")            addLog(evt.msg, evt.level);
+          if (evt.type === "scenario_start") addLog(`▶ [${evt.index+1}/${evt.total}] ${evt.name}`, "system");
+          if (evt.type === "scenario_done")  {
+            setRunResults(p => ({ ...p, [scenarios[evt.index]?.name]: { status:evt.status, passed:evt.passed, failed:evt.failed } }));
+            addLog(`  ${evt.status==="pass"?"✓":"✗"} Done`, evt.status==="pass"?"success":"error");
+          }
+          if (evt.type === "suite_done") {
+            setSuiteResult(evt);
+            setPhase("done");
+            addLog(`Suite complete — ${evt.passed}/${evt.total} passed`, evt.failed===0?"success":"error");
+          }
+        } catch {}
+      }
+    }
+  };
+
+  const ready   = phase === "done" && scenarios.length > 0;
+  const running = phase === "running";
+
+  const canImport = manualMode
+    ? (manualType === "swagger" ? !!swaggerUrl : !!postmanJson)
+    : (selectedSrc && (selectedSrc.type !== "postman" || !!collection));
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display:"flex", height:"calc(100vh - 44px)" }}>
+    <div style={{ display:"flex", height:"100%", fontFamily:"'IBM Plex Mono',monospace" }}>
+
       {/* ── Left panel ── */}
-      <div style={{ width:290, flexShrink:0, borderRight:"0.5px solid #1e3a5f", display:"flex", flexDirection:"column", background:"#090d11" }}>
+      <div style={{ width:300, flexShrink:0, borderRight:"0.5px solid #1e3a5f", display:"flex", flexDirection:"column", background:"#090d11" }}>
         <div style={{ padding:"14px", borderBottom:"0.5px solid #1e3a5f" }}>
           <div style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.12em", marginBottom:10, textTransform:"uppercase" }}>API Source</div>
 
-          <div style={{ display:"flex", gap:4, marginBottom:10 }}>
-            {["swagger","postman"].map(m => (
-              <button key={m} className={`fb ${inputMode===m?"on":""}`} onClick={() => setInputMode(m)} style={{ flex:1, textAlign:"center" }}>
-                {m === "swagger" ? "Swagger / OpenAPI" : "Postman JSON"}
+          {/* Integration source picker */}
+          {!manualMode && (
+            <>
+              {loadingSrc && <div style={{ fontSize:9, color:"#4a7fa5", marginBottom:8 }}>Loading integrations...</div>}
+
+              {!loadingSrc && sources.length === 0 && (
+                <div style={{ border:"0.5px solid #f0c04040", borderRadius:6, padding:"10px 12px", marginBottom:10, background:"#1a1500", fontSize:10, color:"#f0c040", lineHeight:1.8 }}>
+                  ⚠ No API integrations connected.<br/>
+                  Add Postman or Swagger in<br/>
+                  <strong style={{ color:"#7ec8ff" }}>🔗 Context → Integrations</strong>
+                </div>
+              )}
+
+              {!loadingSrc && sources.length > 0 && (
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ fontSize:9, color:"#2d6aad", marginBottom:5 }}>Connected integrations</div>
+                  {sources.map(src => (
+                    <div key={src.integrationId}
+                      onClick={() => { setSelectedSrc(src); setCollection(null); setColSearch(""); }}
+                      style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", borderRadius:6, border:`0.5px solid ${selectedSrc?.integrationId===src.integrationId?"#4d9de0":"#1e3a5f"}`, background:selectedSrc?.integrationId===src.integrationId?"#1a3050":"#0d1520", cursor:"pointer", marginBottom:5 }}>
+                      <span style={{ fontSize:14 }}>{src.type==="postman"?"📮":"📄"}</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:10, color:selectedSrc?.integrationId===src.integrationId?"#7ec8ff":"#b0c8e0" }}>{src.name}</div>
+                        <div style={{ fontSize:8, color:"#2d6aad" }}>
+                          {src.type === "postman" ? `${src.collections?.length || 0} collection(s)` : "Swagger / OpenAPI"}
+                        </div>
+                      </div>
+                      {selectedSrc?.integrationId===src.integrationId && <span style={{ color:"#4caf50" }}>✓</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Collection picker for Postman */}
+              {selectedSrc?.type === "postman" && (
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ fontSize:9, color:"#2d6aad", marginBottom:5 }}>Collection</div>
+                  <div style={{ position:"relative" }}>
+                    <input
+                      value={collection ? collection.name : colSearch}
+                      onChange={e => { setColSearch(e.target.value); setCollection(null); setShowColPicker(true); }}
+                      onFocus={() => setShowColPicker(true)}
+                      placeholder="Type to search or pick..."
+                      style={{ width:"100%", background:"#0d1520", border:`0.5px solid ${collection?"#4caf50":"#1e3a5f"}`, borderRadius:5, color:"#c8d8e8", fontSize:11, padding:"7px 9px", outline:"none", fontFamily:"inherit" }}
+                    />
+                    {showColPicker && filteredCols.length > 0 && (
+                      <div style={{ position:"absolute", top:"100%", left:0, right:0, zIndex:100, background:"#0a0e12", border:"0.5px solid #2d6aad", borderRadius:5, maxHeight:160, overflowY:"auto", boxShadow:"0 4px 16px #000a" }}>
+                        {filteredCols.map(c => (
+                          <div key={c.id}
+                            onClick={() => { setCollection(c); setColSearch(""); setShowColPicker(false); }}
+                            style={{ padding:"7px 12px", cursor:"pointer", fontSize:10, color:"#b0c8e0", borderBottom:"0.5px solid #0d1a2a" }}
+                            onMouseEnter={e => e.currentTarget.style.background="#1a3050"}
+                            onMouseLeave={e => e.currentTarget.style.background="transparent"}>
+                            {c.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <button onClick={() => setManualMode(true)}
+                style={{ background:"none", border:"none", color:"#2d6aad", cursor:"pointer", fontSize:9, padding:"2px 0", fontFamily:"inherit", textDecoration:"underline" }}>
+                or enter URL / paste JSON manually
+              </button>
+            </>
+          )}
+
+          {/* Manual fallback */}
+          {manualMode && (
+            <>
+              <div style={{ display:"flex", gap:4, marginBottom:8 }}>
+                {["swagger","postman"].map(t => (
+                  <button key={t} onClick={() => setManualType(t)}
+                    style={{ flex:1, background:manualType===t?"#1a3050":"#0d1520", border:`0.5px solid ${manualType===t?"#4d9de0":"#1e3a5f"}`, borderRadius:4, color:manualType===t?"#7ec8ff":"#4a7fa5", cursor:"pointer", fontSize:9, padding:"5px 0", fontFamily:"inherit" }}>
+                    {t === "swagger" ? "Swagger URL" : "Postman JSON"}
+                  </button>
+                ))}
+              </div>
+              {manualType === "swagger" ? (
+                <input value={swaggerUrl} onChange={e=>setSwaggerUrl(e.target.value)}
+                  placeholder="https://api.example.com/swagger.json" style={inp} />
+              ) : (
+                <textarea value={postmanJson} onChange={e=>setPostmanJson(e.target.value)}
+                  placeholder="Paste Postman collection JSON..." rows={4} style={{ ...inp, resize:"vertical" }} />
+              )}
+              <input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)}
+                placeholder="Base URL (optional override)" style={{ ...inp, marginTop:6 }} />
+              <button onClick={() => { setManualMode(false); setSelectedSrc(null); }}
+                style={{ background:"none", border:"none", color:"#2d6aad", cursor:"pointer", fontSize:9, padding:"4px 0", fontFamily:"inherit", textDecoration:"underline" }}>
+                ← use connected integration
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Filter + credentials */}
+        <div style={{ padding:"12px 14px", borderBottom:"0.5px solid #1e3a5f" }}>
+          <div style={{ fontSize:9, color:"#2d6aad", marginBottom:5 }}>Scenario Filter</div>
+          <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:10 }}>
+            {["all","critical","high","medium","low"].map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                style={{ background:filter===f?"#1a3050":"#0d1520", border:`0.5px solid ${filter===f?"#4d9de0":"#1e3a5f"}`, borderRadius:4, color:filter===f?"#7ec8ff":"#4a7fa5", cursor:"pointer", fontSize:8, padding:"3px 8px", fontFamily:"inherit", textTransform:"capitalize" }}>
+                {f}
               </button>
             ))}
           </div>
+          <div style={{ fontSize:9, color:"#2d6aad", marginBottom:5 }}>Credentials</div>
+          <CredentialPicker value={credentialId} onChange={setCredentialId} />
+        </div>
 
-          {inputMode === "swagger" ? (
-            <input value={swaggerUrl} onChange={e => setSwaggerUrl(e.target.value)}
-              placeholder="https://api.example.com/swagger.json"
-              style={{ width:"100%", background:"#0d1520", border:"0.5px solid #1e3a5f", borderRadius:5, color:"#c8d8e8", fontSize:11, padding:"7px 9px", outline:"none", marginBottom:8, fontFamily:"inherit" }} />
-          ) : (
-            <textarea value={postmanText} onChange={e => setPostmanText(e.target.value)}
-              placeholder="Paste Postman collection JSON here..."
-              style={{ width:"100%", height:80, background:"#0d1520", border:"0.5px solid #1e3a5f", borderRadius:5, color:"#c8d8e8", fontSize:10, padding:"7px 9px", outline:"none", marginBottom:8, fontFamily:"'IBM Plex Mono',monospace", resize:"vertical" }} />
-          )}
-
-          <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
-            placeholder="Base URL (e.g. https://api.example.com)"
-            style={{ width:"100%", background:"#0d1520", border:"0.5px solid #1e3a5f", borderRadius:5, color:"#c8d8e8", fontSize:11, padding:"7px 9px", outline:"none", marginBottom:10, fontFamily:"inherit" }} />
-
-          <div style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.08em", marginBottom:5 }}>Credentials</div>
-          <div style={{ marginBottom:10 }}>
-            <CredentialPicker value={credentialId} onChange={(id) => setCredentialId(id)} />
-          </div>
-
-          <button className="disc" onClick={handleImport}
-            disabled={phase==="importing" || (!swaggerUrl && !postmanText)}
-            style={{ fontSize:12, padding:"8px 0", marginBottom:6 }}>
-            {phase === "importing" ? "IMPORTING..." : "⬆ IMPORT"}
+        {/* Actions */}
+        <div style={{ padding:"12px 14px" }}>
+          <button onClick={importAndBuild} disabled={!canImport || running || phase==="importing" || phase==="building"}
+            style={{ width:"100%", background:canImport&&!running?"linear-gradient(135deg,#1a0a2e,#0a1020)":"#0a0e12", border:`0.5px solid ${canImport&&!running?"#c8a0f0":"#1e3a5f"}`, borderRadius:6, color:canImport&&!running?"#c8a0f0":"#2d6aad", cursor:canImport&&!running?"pointer":"default", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit", letterSpacing:"0.06em", marginBottom:8 }}>
+            {phase==="importing" ? "◈ Importing..." : phase==="building" ? "◈ Building scenarios..." : "◈ Load & Build Scenarios"}
           </button>
 
-          {spec && phase !== "importing" && (
-            <button className="rb" onClick={() => resolveAndRun(creds => doBuild(creds))}
-              disabled={phase==="building" || running}
-              style={{ width:"100%", textAlign:"center", marginBottom:6 }}>
-              {phase === "building" ? "◈ BUILDING..." : "◈ BUILD SCENARIOS"}
-            </button>
-          )}
-
-          {ready && scenarios.length > 0 && (
-            <button onClick={() => resolveAndRun(creds => doRunAll(baseUrl, creds))}
-              disabled={running}
-              style={{ width:"100%", background:"linear-gradient(135deg,#1a4a8a,#0d2a5a)", border:"0.5px solid #4d9de0", borderRadius:5, color:"#7ec8ff", cursor:"pointer", fontFamily:"inherit", fontSize:11, fontWeight:600, padding:"7px 0", letterSpacing:"0.06em" }}>
-              ▶ RUN ALL SCENARIOS
+          {ready && (
+            <button onClick={runAll} disabled={running}
+              style={{ width:"100%", background:running?"#0a0e12":"linear-gradient(135deg,#0a1a0a,#0a0e12)", border:`0.5px solid ${running?"#1e3a5f":"#4caf50"}`, borderRadius:6, color:running?"#2d6aad":"#4caf50", cursor:running?"default":"pointer", fontSize:11, fontWeight:600, padding:"9px 0", fontFamily:"inherit", letterSpacing:"0.06em" }}>
+              {running ? "◈ Running..." : `▶ Run All (${filter==="all"?scenarios.length:scenarios.filter(s=>s.priority?.toLowerCase()===filter).length})`}
             </button>
           )}
         </div>
 
-        {/* Spec info */}
-        {spec && (
-          <div style={{ padding:"10px 14px", borderBottom:"0.5px solid #1e3a5f", background:"#0a0e12" }}>
-            <div style={{ fontSize:12, fontWeight:600, color:"#7ec8ff", marginBottom:2 }}>{spec.title}</div>
-            <div style={{ fontSize:9, color:"#2d6aad", marginBottom:3, letterSpacing:"0.06em" }}>{spec.source} · v{spec.version}</div>
-            <div style={{ fontSize:10, color:"#4a7fa5" }}>{spec.endpointCount} endpoints · {scenarios.length} scenarios</div>
-            {spec.baseUrl && <div style={{ fontSize:9, color:"#1e3a5f", marginTop:3, wordBreak:"break-all" }}>{spec.baseUrl}</div>}
-          </div>
-        )}
-
-        {/* Suite result */}
+        {/* Suite result summary */}
         {suiteResult && (
-          <div style={{ padding:"10px 14px", borderBottom:"0.5px solid #1e3a5f" }}>
-            <div style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:6 }}>Suite Result</div>
-            <div style={{ display:"flex", gap:6 }}>
-              <div style={{ flex:1, background:"#0a2010", border:"0.5px solid #4caf50", borderRadius:5, padding:"5px 0", textAlign:"center", fontSize:11, color:"#7ec87f" }}>{suiteResult.passed} passed</div>
-              <div style={{ flex:1, background:"#1a0808", border:"0.5px solid #ff3b3b", borderRadius:5, padding:"5px 0", textAlign:"center", fontSize:11, color:"#ff6b6b" }}>{suiteResult.failed} failed</div>
+          <div style={{ margin:"0 14px 14px", border:`0.5px solid ${suiteResult.failed===0?"#4caf50":"#ff3b3b"}`, borderRadius:6, padding:"10px 12px", background:suiteResult.failed===0?"#0a1a0a":"#1a0808" }}>
+            <div style={{ fontSize:12, fontWeight:700, color:suiteResult.failed===0?"#4caf50":"#ff3b3b", marginBottom:4 }}>
+              {suiteResult.failed===0?"✓ All Passed":"✗ Some Failed"}
             </div>
+            <div style={{ fontSize:10, color:"#6a8aa8" }}>{suiteResult.passed}/{suiteResult.total} scenarios passed</div>
           </div>
         )}
 
-        {/* Captured variables */}
-        {Object.keys(captures).length > 0 && (
-          <div style={{ padding:"8px 14px", borderBottom:"0.5px solid #1e3a5f" }}>
-            <div style={{ fontSize:9, color:"#c8a0f0", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:5 }}>◈ Captured Variables</div>
-            {Object.entries(captures).map(([k,v]) => (
-              <div key={k} style={{ display:"flex", gap:6, fontSize:10, marginBottom:3 }}>
-                <span style={{ color:"#c8a0f0" }}>{`{{${k}}}`}</span>
-                <span style={{ color:"#6a9ab8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{String(v).slice(0,30)}</span>
+        {/* Context indicator */}
+        {contextUsed && (
+          <div style={{ margin:"0 14px 10px", fontSize:9, color:"#c8a0f0", background:"#1a0a2e", borderRadius:4, padding:"5px 8px", border:"0.5px solid #5b3a8a" }}>
+            ◈ Context from integrations injected
+          </div>
+        )}
+
+        {/* Log */}
+        <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column", borderTop:"0.5px solid #1e3a5f" }}>
+          <div style={{ fontSize:8, color:"#1e3a5f", padding:"4px 12px", textTransform:"uppercase", letterSpacing:"0.1em" }}>Log</div>
+          <div ref={logRef} style={{ flex:1, overflowY:"auto", padding:"4px 10px" }}>
+            {log.map((l,i) => (
+              <div key={i} style={{ fontSize:9, marginBottom:2, lineHeight:1.6,
+                color:l.level==="error"?"#ff6b6b":l.level==="success"?"#7ec87f":l.level==="ai"?"#c8a0f0":l.level==="system"?"#7ec8ff":"#6a8aa8" }}>
+                {l.level==="error"?"✗":l.level==="success"?"✓":l.level==="ai"?"◈":l.level==="system"?"▶":"›"} {l.msg}
               </div>
             ))}
           </div>
-        )}
-
-        <div style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.1em", padding:"5px 14px", borderBottom:"0.5px solid #1e3a5f", textTransform:"uppercase" }}>Log</div>
-        <LogPanel log={log} logRef={logRef} isLoading={["importing","building","running"].includes(phase)} emptyText={"Import a Swagger URL\nor Postman collection"} />
+        </div>
       </div>
 
       {/* ── Main panel ── */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
-        {!spec ? (
-          <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
-            <div style={{ fontSize:28 }}>🔌</div>
-            <div style={{ fontSize:12, color:"#2d6aad", letterSpacing:"0.08em" }}>API Automation Agent</div>
-            <div style={{ fontSize:10, color:"#1e3a5f", maxWidth:300, textAlign:"center", lineHeight:1.9 }}>
-              Import a Swagger/OpenAPI spec or Postman collection.<br/>
-              Pick credentials from the vault — they'll be auto-injected.<br/>
-              AI builds multi-step business transaction scenarios.
-            </div>
+        {/* Sub-tabs */}
+        {ready && (
+          <div style={{ background:"#090d11", borderBottom:"0.5px solid #1e3a5f", padding:"0 14px", display:"flex", alignItems:"stretch", height:36, flexShrink:0 }}>
+            {[
+              ["scenarios", `Scenarios (${scenarios.length})`],
+              ["results",   `Results (${Object.keys(runResults).length})`],
+            ].map(([t,l]) => (
+              <button key={t} onClick={() => setActiveTab(t)}
+                style={{ background:"none", border:"none", borderBottom:activeTab===t?"2px solid #4d9de0":"2px solid transparent", color:activeTab===t?"#7ec8ff":"#4a7fa5", cursor:"pointer", fontSize:10, padding:"0 14px", fontFamily:"inherit", fontWeight:activeTab===t?600:400 }}>
+                {l}
+              </button>
+            ))}
           </div>
-        ) : (
-          <>
-            <div style={{ background:"#0a0e12", borderBottom:"0.5px solid #1e3a5f", padding:"0 14px", display:"flex", alignItems:"center" }}>
-              {[["scenarios",`SCENARIOS (${scenarios.length})`],["endpoints",`ENDPOINTS (${spec.endpointCount})`]].map(([t,l]) => (
-                <button key={t} className={`tab ${activeTab===t?"on":""}`} onClick={() => setActiveTab(t)}>{l}</button>
-              ))}
-            </div>
-
-            {activeTab === "scenarios" && (
-              <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
-                <div style={{ width:300, flexShrink:0, borderRight:"0.5px solid #1e3a5f", overflowY:"auto", padding:"8px 10px" }}>
-                  {scenarios.length === 0 && phase !== "building" && (
-                    <div style={{ fontSize:10, color:"#1e3a5f", textAlign:"center", marginTop:30, lineHeight:1.9 }}>
-                      Click ◈ BUILD SCENARIOS<br/>to generate test scenarios
-                    </div>
-                  )}
-                  {phase === "building" && (
-                    <div style={{ fontSize:10, color:"#c8a0f0", textAlign:"center", marginTop:30 }}>
-                      <div style={{ display:"flex", justifyContent:"center", gap:3, marginBottom:8 }}>
-                        {[0,.2,.4].map((d,i) => <div key={i} style={{ width:5,height:5,borderRadius:"50%",background:"#c8a0f0",animation:`pulse 0.8s ${d}s infinite` }}/>)}
-                      </div>
-                      AI building scenarios...
-                    </div>
-                  )}
-                  {scenarios.map(sc => {
-                    const result = runResults[sc.id];
-                    const pc = PRIORITY_COLORS[sc.priority] ?? PRIORITY_COLORS.Medium;
-                    const isActive = selectedScenario?.id === sc.id;
-                    return (
-                      <div key={sc.id} className={`uc-card ${isActive?"sel":""}`} onClick={() => setSelectedScenario(sc)}>
-                        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
-                          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-                            <span style={{ fontSize:9, color:"#2d6aad" }}>{sc.id}</span>
-                            {result && <span style={{ fontSize:10, color:result.status==="pass"?"#4caf50":"#ff3b3b" }}>{result.status==="pass"?"✓":"✗"}</span>}
-                          </div>
-                          <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-                            <span className="pill" style={{ background:pc.bg, border:`0.5px solid ${pc.border}`, color:pc.text }}>{sc.priority}</span>
-                            <button className="rb" style={{ fontSize:9, padding:"2px 7px" }}
-                              onClick={e => { e.stopPropagation(); setSelectedScenario(sc); resolveAndRun(creds => doRunScenario(sc, baseUrl, creds)); }}>▶</button>
-                          </div>
-                        </div>
-                        <div style={{ fontSize:11, fontWeight:500, color:"#b0c8e0", marginBottom:3, lineHeight:1.4 }}>{sc.name}</div>
-                        <div style={{ fontSize:10, color:"#4a7fa5", lineHeight:1.5 }}>{sc.description}</div>
-                        <div style={{ marginTop:5, fontSize:9, color:"#2d6aad" }}>{sc.steps?.length ?? 0} steps · {sc.category}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{ flex:1, overflowY:"auto", padding:"14px 18px" }}>
-                  {!selectedScenario ? (
-                    <div style={{ textAlign:"center", marginTop:60, color:"#2d6aad", fontSize:11 }}>← Select a scenario · click ▶ to run</div>
-                  ) : (
-                    <ScenarioDetail
-                      scenario={selectedScenario}
-                      result={runResults[selectedScenario.id]}
-                      activeStep={activeStep}
-                      onRun={() => resolveAndRun(creds => doRunScenario(selectedScenario, baseUrl, creds))}
-                      running={running}
-                    />
-                  )}
-                </div>
-              </div>
-            )}
-
-            {activeTab === "endpoints" && (
-              <div style={{ flex:1, overflowY:"auto", padding:"12px 16px" }}>
-                {spec.endpoints?.map((ep, i) => {
-                  const c = METHOD_COLORS[ep.method] ?? METHOD_COLORS.GET;
-                  return (
-                    <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"8px 10px", borderBottom:"0.5px solid #0d1a2a", fontSize:11 }}>
-                      <span style={{ fontSize:9, fontWeight:700, padding:"2px 6px", borderRadius:3, background:c.bg, border:`0.5px solid ${c.border}`, color:c.text, minWidth:48, textAlign:"center", flexShrink:0 }}>{ep.method}</span>
-                      <div style={{ flex:1 }}>
-                        <div style={{ color:"#a0d0e8", fontWeight:500, marginBottom:2 }}>{ep.path}</div>
-                        {ep.summary && <div style={{ fontSize:10, color:"#4a7fa5" }}>{ep.summary}</div>}
-                      </div>
-                      {ep.tags?.[0] && <span className="pill" style={{ background:"#0d1a2a", border:"0.5px solid #1e3a5f", color:"#4a7fa5", fontSize:9, flexShrink:0 }}>{ep.tags[0]}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
         )}
-      </div>
-    </div>
-  );
-}
 
-function ScenarioDetail({ scenario, result, activeStep, onRun, running }) {
-  const pc = PRIORITY_COLORS[scenario.priority] ?? PRIORITY_COLORS.Medium;
-  return (
-    <div className="fi">
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-        <div style={{ display:"flex", gap:7, alignItems:"center" }}>
-          <span style={{ fontSize:9, color:"#2d6aad" }}>{scenario.id}</span>
-          <span className="pill" style={{ background:pc.bg, border:`0.5px solid ${pc.border}`, color:pc.text }}>{scenario.priority}</span>
-          <span style={{ fontSize:9, color:"#4a7fa5" }}>{scenario.category}</span>
-        </div>
-        <button className="rb" onClick={onRun} disabled={running}>{running?"⟳ RUNNING...":"▶ RUN"}</button>
-      </div>
-      <div style={{ fontSize:14, fontWeight:600, color:"#e0f0ff", marginBottom:5 }}>{scenario.name}</div>
-      <div style={{ fontSize:11, color:"#6a9ab8", lineHeight:1.7, marginBottom:14 }}>{scenario.description}</div>
-
-      {result?.status && (
-        <div style={{ background:result.status==="pass"?"#0a2010":"#1a0808", border:`0.5px solid ${result.status==="pass"?"#4caf50":"#ff3b3b"}`, borderRadius:6, padding:"8px 12px", marginBottom:14 }}>
-          <div style={{ fontSize:11, color:result.status==="pass"?"#7ec87f":"#ff6b6b", fontWeight:600 }}>{result.status==="pass"?"✓ ALL PASSED":"✗ SOME FAILED"}</div>
-          <div style={{ fontSize:10, color:"#4a7fa5", marginTop:2 }}>{result.passed}/{result.total} steps passed</div>
-        </div>
-      )}
-
-      <div style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:8 }}>Steps ({scenario.steps?.length ?? 0})</div>
-      {scenario.steps?.map((step, i) => {
-        const stepResult = result?.steps?.find(s => s.stepId === step.id);
-        const isActive   = activeStep === step.id;
-        const sc = stepResult?.status==="pass"?"#4caf50":stepResult?.status==="fail"?"#ff3b3b":isActive?"#ffaa44":"#2d6aad";
-        const mc = METHOD_COLORS[step.method] ?? METHOD_COLORS.GET;
-        return (
-          <div key={step.id} style={{ border:`0.5px solid ${isActive?"#ffaa44":"#1e3a5f"}`, borderRadius:7, padding:"10px 12px", marginBottom:8, background:isActive?"#1a1800":stepResult?.status==="fail"?"#1a0808":"#0d1520", transition:"all 0.2s" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
-              <div style={{ width:16,height:16,borderRadius:"50%",border:`0.5px solid ${sc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:sc,flexShrink:0 }}>
-                {stepResult?.status==="pass"?"✓":stepResult?.status==="fail"?"✗":isActive?"●":i+1}
+        <div style={{ flex:1, overflowY:"auto" }}>
+          {/* Empty state */}
+          {!ready && phase === "idle" && (
+            <div style={{ textAlign:"center", marginTop:80 }}>
+              <div style={{ fontSize:36, marginBottom:12 }}>🔌</div>
+              <div style={{ fontSize:12, color:"#2d6aad", marginBottom:8 }}>
+                {sources.length > 0
+                  ? "Select a source and click Load & Build Scenarios"
+                  : "Connect Postman or Swagger in 🔗 Context → Integrations"}
               </div>
-              <span style={{ fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:mc.bg,border:`0.5px solid ${mc.border}`,color:mc.text }}>{step.method}</span>
-              <span style={{ fontSize:11,color:"#a0d0e8",fontWeight:500,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{step.path}</span>
-              {stepResult?.duration && <span style={{ fontSize:9,color:"#4a7fa5" }}>{stepResult.duration}ms</span>}
-              {stepResult?.statusCode && <span style={{ fontSize:9,fontWeight:700,color:stepResult.statusCode<300?"#4caf50":stepResult.statusCode<400?"#f0c040":"#ff6b6b" }}>{stepResult.statusCode}</span>}
+              <div style={{ fontSize:10, color:"#1e3a5f", lineHeight:2 }}>
+                ATP will pull your API spec, inject context from Jira<br/>
+                and Confluence, and build intelligent test scenarios.
+              </div>
             </div>
-            <div style={{ fontSize:10,color:"#4a7fa5",marginBottom:step.assertions?.length?6:0 }}>{step.name}</div>
-            {step.assertions?.map((a,j)=>{
-              const ar = stepResult?.assertions?.[j];
-              return (
-                <div key={j} style={{ display:"flex",gap:5,fontSize:9,padding:"2px 0",color:ar?(ar.passed?"#7ec87f":"#ff6b6b"):"#2d6aad" }}>
-                  <span>{ar?(ar.passed?"✓":"✗"):"·"}</span>
-                  <span>{a.type==="status"?`status = ${a.expected}`:a.type==="jsonpath"?`${a.path} exists`:a.type==="schema"?`${a.field} is ${a.dataType}`:JSON.stringify(a)}</span>
-                  {ar?.actual!==undefined && <span style={{ color:"#1e3a5f" }}>→ {String(ar.actual).slice(0,30)}</span>}
+          )}
+
+          {/* Scenarios tab */}
+          {ready && activeTab === "scenarios" && (
+            <div style={{ padding:"14px" }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+                <div style={{ fontSize:11, color:"#7ec8ff" }}>
+                  {scenarios.length} scenario(s)
+                  {spec && <span style={{ color:"#4a7fa5" }}> · {spec.baseUrl}</span>}
                 </div>
-              );
-            })}
-            {step.captureFrom && Object.keys(step.captureFrom).length>0 && (
-              <div style={{ marginTop:5,fontSize:9,color:"#c8a0f0" }}>captures: {Object.keys(step.captureFrom).map(k=>`{{${k}}}`).join(", ")}</div>
-            )}
-          </div>
-        );
-      })}
+              </div>
+
+              {scenarios.map((sc, i) => {
+                const res = runResults[sc.name];
+                const sc2 = res ? (STATUS_C[res.status] || STATUS_C.error) : null;
+                return (
+                  <div key={i}
+                    style={{ border:`0.5px solid ${selected?.name===sc.name?"#4d9de0":res?"#1e3a5f":"#1a2a3a"}`, borderRadius:8, padding:"12px 14px", marginBottom:8, background:"#0d1520", cursor:"pointer" }}
+                    onClick={() => setSelected(selected?.name===sc.name ? null : sc)}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                      {res && <span style={{ fontSize:14, flexShrink:0 }}>{sc2.icon}</span>}
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:11, fontWeight:600, color:"#b0d0f0" }}>{sc.name}</div>
+                        <div style={{ fontSize:9, color:"#4a7fa5" }}>{sc.description?.slice(0,60)}</div>
+                      </div>
+                      <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+                        {sc.priority && (
+                          <span style={{ fontSize:8, padding:"1px 6px", borderRadius:3, background:"#0a0e12", border:"0.5px solid #1e3a5f", color:"#4a7fa5" }}>
+                            {sc.priority}
+                          </span>
+                        )}
+                        {res && (
+                          <span style={{ fontSize:8, padding:"1px 6px", borderRadius:3, background:sc2.bg, border:`0.5px solid ${sc2.color}`, color:sc2.color }}>
+                            {res.status}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Steps preview */}
+                    {selected?.name === sc.name && (
+                      <div style={{ marginTop:8, borderTop:"0.5px solid #1e3a5f", paddingTop:8 }}>
+                        <div style={{ fontSize:9, color:"#2d6aad", marginBottom:5 }}>Steps</div>
+                        {sc.steps?.map((step, j) => (
+                          <div key={j} style={{ display:"flex", gap:6, padding:"3px 0", fontSize:9 }}>
+                            <span style={{ color:"#2d6aad", flexShrink:0 }}>{j+1}.</span>
+                            <span style={{ color:"#6a8aa8" }}>{step.description}</span>
+                            {step.method && (
+                              <span style={{ color:METHOD_COLORS[step.method]||"#4a7fa5", fontWeight:600, flexShrink:0 }}>{step.method}</span>
+                            )}
+                          </div>
+                        ))}
+                        <button onClick={e => { e.stopPropagation(); runOne(sc); }} disabled={running}
+                          style={{ marginTop:8, width:"100%", background:"#0a1a0a", border:"0.5px solid #4caf50", borderRadius:5, color:running?"#2d6aad":"#4caf50", cursor:running?"default":"pointer", fontSize:10, padding:"6px 0", fontFamily:"inherit" }}>
+                          {running && res?.status==="running" ? "◈ Running..." : "▶ Run this scenario"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Results tab */}
+          {ready && activeTab === "results" && (
+            <div style={{ padding:"14px" }}>
+              {Object.keys(runResults).length === 0 && (
+                <div style={{ textAlign:"center", marginTop:40, color:"#1e3a5f", fontSize:11 }}>
+                  No results yet — run some scenarios.
+                </div>
+              )}
+              {Object.entries(runResults).map(([name, result]) => {
+                const sc2 = STATUS_C[result.status] || STATUS_C.error;
+                return (
+                  <div key={name} style={{ border:`0.5px solid ${sc2.color}40`, borderRadius:8, padding:"12px 14px", marginBottom:8, background:sc2.bg }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                      <span style={{ fontSize:14 }}>{sc2.icon}</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:11, fontWeight:600, color:"#b0d0f0" }}>{name}</div>
+                        <div style={{ fontSize:9, color:sc2.color }}>{result.status?.toUpperCase()}</div>
+                      </div>
+                      {result.passed !== undefined && (
+                        <span style={{ fontSize:9, color:"#4a7fa5" }}>{result.passed}/{(result.passed||0)+(result.failed||0)} steps</span>
+                      )}
+                    </div>
+                    {result.steps?.map((step, i) => (
+                      <div key={i} style={{ display:"flex", gap:6, padding:"2px 0", fontSize:9 }}>
+                        <span style={{ color:step.status==="pass"?"#4caf50":"#ff3b3b", flexShrink:0 }}>{step.status==="pass"?"✓":"✗"}</span>
+                        <span style={{ color:"#6a8aa8" }}>{step.description}</span>
+                        {step.statusCode && <span style={{ color:"#2d6aad", flexShrink:0 }}>{step.statusCode}</span>}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
+
+const inp = {
+  width:"100%", background:"#0d1520", border:"0.5px solid #1e3a5f",
+  borderRadius:5, color:"#c8d8e8", fontSize:11, padding:"7px 9px",
+  outline:"none", fontFamily:"'IBM Plex Mono',monospace",
+};
