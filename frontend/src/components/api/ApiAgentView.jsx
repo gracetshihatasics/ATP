@@ -559,7 +559,7 @@ export function ApiAgentView() {
           </div>
         )}
 
-        <div style={{ flex:1, overflowY:"auto" }}>
+        <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
           {/* Empty state */}
           {!ready && phase === "idle" && (
             <div style={{ textAlign:"center", marginTop:80 }}>
@@ -576,7 +576,7 @@ export function ApiAgentView() {
 
           {/* Scenarios tab — list + detail panel side by side */}
           {ready && activeTab === "scenarios" && (
-            <div style={{ display:"flex", height:"100%", overflow:"hidden" }}>
+            <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
 
               {/* Scenario list */}
               <div style={{ width: openDetail ? 260 : "100%", flexShrink:0, overflowY:"auto", padding:"10px", borderRight: openDetail?"0.5px solid #1e3a5f":"none", transition:"width 0.2s" }}>
@@ -629,7 +629,7 @@ export function ApiAgentView() {
 
           {/* Results tab */}
           {ready && activeTab === "results" && (
-            <div style={{ overflowY:"auto", height:"100%" }}>
+            <div style={{ flex:1, overflowY:"auto" }}>
               {Object.keys(runResults).length === 0 && (
                 <div style={{ textAlign:"center", marginTop:40, color:"#1e3a5f", fontSize:11, padding:20 }}>
                   No results yet — run some scenarios.
