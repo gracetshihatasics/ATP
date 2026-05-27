@@ -29,3 +29,17 @@ Thumbs.db
 .urls.json
 .schedules.json
 .api-scenarios.json
+
+# ATP local data — never commit
+backend/.env
+backend/.vault.json
+backend/.integrations.json
+backend/.results.json
+backend/.schedules.json
+backend/.testbed.json
+backend/.urls.json
+backend/.api-scenarios.json
+backend/.git-config.json
+.integrations.json
+.env
+*.env
