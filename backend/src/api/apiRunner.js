@@ -1,205 +1,228 @@
 /**
  * Executes API test scenarios step by step.
  * Handles data chaining via {{variable}} substitution between steps.
+ * Emits full request/response details for each step.
  */
 
-/**
- * Run a full scenario.
- * @param {object} scenario
- * @param {string} baseUrl
- * @param {{ username?: string, password?: string }} credentials
- * @param {(event: object) => void} onEvent — streaming callback
- * @returns {Promise<ScenarioResult>}
- */
+const SENSITIVE_KEYS = ["password","secret","token","apikey","api_key","authorization","x-api-key","bearer","auth","credential","key"];
+
+function isSensitiveKey(k) {
+  const lower = k.toLowerCase();
+  return SENSITIVE_KEYS.some(s => lower.includes(s));
+}
+
+function maskSensitive(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = isSensitiveKey(k) ? "••••••••" : (typeof v === "object" ? maskSensitive(v) : v);
+  }
+  return out;
+}
+
 export async function runScenario(scenario, baseUrl, credentials = {}, onEvent = () => {}) {
   const context = {
-    // Seed context with credentials so steps can reference {{username}} etc.
     username: credentials.username ?? "",
     password: credentials.password ?? "",
+    ...Object.fromEntries(
+      Object.entries(credentials).filter(([k]) => !["username","password"].includes(k))
+    ),
   };
 
   const stepResults = [];
-  onEvent({ type: "scenario_start", scenarioId: scenario.id, name: scenario.name });
+  const captureLog  = []; // track all captures across the run
 
-  for (const step of scenario.steps ?? []) {
-    onEvent({ type: "step_start", stepId: step.id, name: step.name, method: step.method, path: step.path });
+  onEvent({ type:"scenario_start", scenarioId:scenario.id, name:scenario.name });
+
+  for (let i = 0; i < (scenario.steps ?? []).length; i++) {
+    const step = scenario.steps[i];
+    onEvent({ type:"step_start", stepIndex:i, stepId:step.id, name:step.name, method:step.method, path:step.path });
 
     try {
       const result = await runStep(step, baseUrl, context);
-      stepResults.push(result);
 
       // Capture values from response into context for next steps
-      if (step.captureFrom && result.body) {
+      const captures = [];
+      if (step.captureFrom && result.responseBody) {
         for (const [varName, jsonPath] of Object.entries(step.captureFrom)) {
-          const value = extractByJsonPath(result.body, jsonPath);
+          const value = extractByJsonPath(result.responseBody, jsonPath);
           if (value !== undefined) {
             context[varName] = value;
-            onEvent({ type: "capture", varName, value: typeof value === "string" ? value.slice(0, 50) : value });
+            const masked = isSensitiveKey(varName) ? "••••••••" : String(value).slice(0,80);
+            captures.push({ varName, jsonPath, value: masked, sensitive: isSensitiveKey(varName) });
+            captureLog.push({ step: step.name, varName, jsonPath });
+            onEvent({ type:"capture", stepId:step.id, varName, value:masked, jsonPath });
           }
         }
       }
 
-      onEvent({ type: "step_done", stepId: step.id, status: result.status, assertions: result.assertions });
+      const stepResult = {
+        ...result,
+        stepIndex:   i,
+        captures,
+        usedVars:    findUsedVars(step),
+        captureFrom: step.captureFrom || {},
+        dependsOn:   step.dependsOn || null,
+      };
+
+      stepResults.push(stepResult);
+      onEvent({ type:"step_done", stepIndex:i, stepId:step.id, ...stepResult });
 
     } catch (err) {
-      const failResult = { stepId: step.id, name: step.name, status: "error", error: err.message, assertions: [] };
-      stepResults.push(failResult);
-      onEvent({ type: "step_error", stepId: step.id, error: err.message });
+      const fail = {
+        stepIndex: i, stepId:step.id, name:step.name,
+        status:"error", error:err.message, assertions:[],
+        method:step.method, path:step.path, captures:[],
+      };
+      stepResults.push(fail);
+      onEvent({ type:"step_error", stepIndex:i, stepId:step.id, error:err.message, name:step.name });
     }
   }
 
-  const passed = stepResults.filter(s => s.status === "pass").length;
-  const failed = stepResults.filter(s => s.status !== "pass").length;
+  const passed = stepResults.filter(s => s.status==="pass").length;
+  const failed = stepResults.filter(s => s.status!=="pass").length;
+  const totalDuration = stepResults.reduce((s,r) => s+(r.duration||0), 0);
 
   const result = {
-    scenarioId: scenario.id,
-    name:       scenario.name,
-    status:     failed === 0 ? "pass" : "fail",
-    passed,
-    failed,
-    total:      stepResults.length,
-    steps:      stepResults,
-    context:    sanitiseContext(context),
+    scenarioId:  scenario.id,
+    name:        scenario.name,
+    description: scenario.description,
+    status:      failed===0 ? "pass" : "fail",
+    passed, failed,
+    total:       stepResults.length,
+    duration:    totalDuration,
+    steps:       stepResults,
+    captureLog,
     completedAt: new Date().toISOString(),
   };
 
-  onEvent({ type: "scenario_done", ...result });
+  onEvent({ type:"scenario_done", ...result });
   return result;
 }
 
-/**
- * Run a single step — substitute variables, make HTTP request, validate assertions.
- */
 async function runStep(step, baseUrl, context) {
-  // Substitute {{variable}} placeholders in path, body, headers
-  const path    = substitute(step.path, context);
-  const body    = step.body ? JSON.parse(substitute(JSON.stringify(step.body), context)) : undefined;
-  const headers = substitute(JSON.stringify(step.headers ?? { "Content-Type": "application/json" }), context);
-  const parsedHeaders = JSON.parse(headers);
-
-  // Build query string from params
-  const params = step.params ? new URLSearchParams(
-    Object.fromEntries(
-      Object.entries(step.params).map(([k, v]) => [k, substitute(String(v), context)])
-    )
-  ).toString() : "";
+  const path    = substitute(step.path || "", context);
+  const rawBody = step.body ? JSON.parse(substitute(JSON.stringify(step.body), context)) : undefined;
+  const rawHeaders = JSON.parse(substitute(
+    JSON.stringify(step.headers ?? { "Content-Type":"application/json" }), context
+  ));
+  const params = step.params
+    ? new URLSearchParams(Object.fromEntries(
+        Object.entries(step.params).map(([k,v]) => [k, substitute(String(v), context)])
+      )).toString()
+    : "";
 
   const fullUrl = `${baseUrl}${path}${params ? `?${params}` : ""}`;
 
-  const fetchOptions = {
-    method:  step.method,
-    headers: parsedHeaders,
-  };
-
-  if (body && !["GET","HEAD"].includes(step.method)) {
-    fetchOptions.body = JSON.stringify(body);
+  const fetchOptions = { method:step.method, headers:rawHeaders };
+  if (rawBody && !["GET","HEAD"].includes(step.method)) {
+    fetchOptions.body = JSON.stringify(rawBody);
   }
 
   const startTime = Date.now();
-  const response  = await fetch(fullUrl, fetchOptions);
-  const duration  = Date.now() - startTime;
+  let response, responseText;
+  try {
+    response     = await fetch(fullUrl, fetchOptions);
+    responseText = await response.text();
+  } catch (err) {
+    throw new Error(`Network error: ${err.message}`);
+  }
+  const duration = Date.now() - startTime;
 
   let responseBody = null;
-  try {
-    const text = await response.text();
-    responseBody = text ? JSON.parse(text) : null;
-  } catch {
-    responseBody = null;
-  }
+  try { responseBody = responseText ? JSON.parse(responseText) : null; } catch {}
 
-  // Run assertions
-  const assertionResults = runAssertions(step.assertions ?? [], response.status, responseBody);
+  const assertionResults = runAssertions(step.assertions ?? [], response.status, responseBody, duration);
   const allPassed = assertionResults.every(a => a.passed);
 
+  // Mask sensitive headers/body for display
+  const safeHeaders  = maskSensitive(rawHeaders);
+  const safeReqBody  = rawBody ? maskSensitive(rawBody) : null;
+  const safeRespBody = responseBody;
+
   return {
-    stepId:     step.id,
-    name:       step.name,
-    method:     step.method,
-    url:        fullUrl,
-    statusCode: response.status,
+    stepId:          step.id,
+    name:            step.name,
+    method:          step.method,
+    path,
+    url:             fullUrl,
+    statusCode:      response.status,
     duration,
-    body:       responseBody,
-    status:     allPassed ? "pass" : "fail",
-    assertions: assertionResults,
+    // Request details (safe for display)
+    requestHeaders:  safeHeaders,
+    requestBody:     safeReqBody,
+    requestParams:   step.params || {},
+    // Response details
+    responseBody:    safeRespBody,
+    responseHeaders: Object.fromEntries([...response.headers.entries()].filter(([k])=>!isSensitiveKey(k))),
+    responseText:    responseText?.slice(0, 2000),
+    status:          allPassed ? "pass" : "fail",
+    assertions:      assertionResults,
   };
 }
 
-/**
- * Validate a list of assertions against the response.
- */
-function runAssertions(assertions, statusCode, body) {
-  return assertions.map(assertion => {
+function runAssertions(assertions, statusCode, body, duration) {
+  return assertions.map(a => {
     try {
-      switch (assertion.type) {
+      switch (a.type) {
         case "status":
-          return {
-            ...assertion,
-            passed:  statusCode === assertion.expected,
-            actual:  statusCode,
-          };
-
+          return { ...a, passed: statusCode===a.expected, actual:statusCode,
+            message: statusCode===a.expected ? null : `Expected ${a.expected}, got ${statusCode}` };
         case "jsonpath": {
-          const value = extractByJsonPath(body, assertion.path);
+          const value = extractByJsonPath(body, a.path);
           const exists = value !== undefined && value !== null;
-          if (assertion.exists !== undefined) {
-            return { ...assertion, passed: exists === assertion.exists, actual: value };
-          }
-          if (assertion.expected !== undefined) {
-            return { ...assertion, passed: value == assertion.expected, actual: value };
-          }
-          return { ...assertion, passed: exists, actual: value };
+          let passed;
+          if (a.exists !== undefined) passed = exists === a.exists;
+          else if (a.expected !== undefined) passed = value == a.expected;
+          else if (a.contains !== undefined) passed = String(value||"").includes(a.contains);
+          else passed = exists;
+          return { ...a, passed, actual:value, message:passed?null:`Path ${a.path}: expected ${a.expected??a.exists??"exists"}, got ${value}` };
         }
-
         case "schema": {
-          const value = body?.[assertion.field];
-          const passed = typeof value === assertion.dataType;
-          return { ...assertion, passed, actual: typeof value };
+          const value = body?.[a.field];
+          const passed = typeof value === a.dataType;
+          return { ...a, passed, actual:typeof value, message:passed?null:`Field "${a.field}" is ${typeof value}, expected ${a.dataType}` };
         }
-
-        case "contains": {
-          const bodyStr = JSON.stringify(body ?? "");
-          return { ...assertion, passed: bodyStr.includes(assertion.value), actual: bodyStr.slice(0, 100) };
+        case "duration":
+          return { ...a, passed:duration<=a.max, actual:duration, message:duration<=a.max?null:`Took ${duration}ms, limit is ${a.max}ms` };
+        case "header": {
+          const val = body?.headers?.[a.name] || "";
+          const passed = a.contains ? val.includes(a.contains) : !!val;
+          return { ...a, passed, actual:val };
         }
-
         case "not_empty": {
-          const value = extractByJsonPath(body, assertion.path);
-          const passed = value !== null && value !== undefined && value !== "" &&
-            !(Array.isArray(value) && value.length === 0);
-          return { ...assertion, passed, actual: value };
+          const value = extractByJsonPath(body, a.path);
+          const passed = value!==null && value!==undefined && value!=="" && !(Array.isArray(value)&&value.length===0);
+          return { ...a, passed, actual:value, message:passed?null:`Path ${a.path} is empty` };
         }
-
         default:
-          return { ...assertion, passed: true, note: "unknown assertion type — skipped" };
+          return { ...a, passed:true, note:"unknown type — skipped" };
       }
     } catch (err) {
-      return { ...assertion, passed: false, error: err.message };
+      return { ...a, passed:false, error:err.message };
     }
   });
 }
 
-/**
- * Extract a value from an object using a simple dot-notation or JSONPath-lite.
- * Supports: $.field, $.nested.field, $.array[0].field
- */
+function findUsedVars(step) {
+  const str = JSON.stringify({ path:step.path, headers:step.headers, body:step.body, params:step.params });
+  const matches = str.matchAll(/\{\{(\w+)\}\}/g);
+  return [...new Set([...matches].map(m => m[1]))].filter(v => !["username","password"].includes(v));
+}
+
 function extractByJsonPath(obj, path) {
   if (!obj || !path) return undefined;
-  // Strip leading $. 
   const clean = path.replace(/^\$\.?/, "");
   if (!clean) return obj;
-
-  const parts = clean.split(/\.|\[(\d+)\]/).filter(Boolean);
   let current = obj;
-  for (const part of parts) {
-    if (current === null || current === undefined) return undefined;
-    const index = parseInt(part);
-    current = isNaN(index) ? current[part] : current[index];
+  for (const part of clean.split(/\.|\[(\d+)\]/).filter(Boolean)) {
+    if (current===null||current===undefined) return undefined;
+    const idx = parseInt(part);
+    current = isNaN(idx) ? current[part] : current[idx];
   }
   return current;
 }
 
-/**
- * Substitute {{variable}} placeholders in a string using the context map.
- */
 function substitute(str, context) {
   return str.replace(/\{\{(\w+)\}\}/g, (_, key) => {
     const val = context[key];
@@ -207,11 +230,10 @@ function substitute(str, context) {
   });
 }
 
-/**
- * Remove sensitive values from context before returning to client.
- */
 function sanitiseContext(context) {
   const safe = { ...context };
-  for (const key of ["password", "secret", "apiSecret"]) delete safe[key];
+  for (const key of Object.keys(safe)) {
+    if (/password|secret|token|apikey|api_key|auth|bearer/i.test(key)) delete safe[key];
+  }
   return safe;
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { CredentialPicker } from "../shared/CredentialPicker.jsx";
-import { resolveContext }   from "../../services/vault.js";
-import { METHOD_COLORS }    from "../../constants/theme.js";
+import { CredentialPicker }     from "../shared/CredentialPicker.jsx";
+import { resolveContext }        from "../../services/vault.js";
+import { METHOD_COLORS }         from "../../constants/theme.js";
+import { ScenarioDetailPanel }   from "./ScenarioDetailPanel.jsx";
 
 const BACKEND = "http://localhost:3579";
 
@@ -47,6 +48,7 @@ export function ApiAgentView() {
   const [phase,        setPhase]        = useState("idle");
   const [log,          setLog]          = useState([]);
   const [selected,     setSelected]     = useState(null);
+  const [openDetail,   setOpenDetail]   = useState(null); // scenario open in detail panel
   const [runResults,   setRunResults]   = useState({});
   const [suiteResult,  setSuiteResult]  = useState(null);
   const [activeTab,    setActiveTab]    = useState("scenarios");
@@ -215,7 +217,10 @@ export function ApiAgentView() {
           const evt = JSON.parse(line.slice(6));
           if (evt.type === "log")  addLog(evt.msg, evt.level);
           if (evt.type === "step") addLog(`  ${evt.status==="pass"?"✓":"✗"} ${evt.description}`, evt.status==="pass"?"success":"error");
-          if (evt.type === "done") { setRunResults(p => ({ ...p, [scenario.id]: evt.result })); setPhase("done"); }
+          if (evt.type === "done") {
+            setRunResults(p => ({ ...p, [scenario.id]: evt.result }));
+            setPhase("done");
+          }
         } catch {}
       }
     }
@@ -569,80 +574,94 @@ export function ApiAgentView() {
             </div>
           )}
 
-          {/* Scenarios tab */}
+          {/* Scenarios tab — list + detail panel side by side */}
           {ready && activeTab === "scenarios" && (
-            <div style={{ padding:"14px" }}>
-              {visibleScenarios.map((sc, i) => {
-                const res = runResults[sc.id];
-                const rc  = res ? (STATUS_C[res.status] || STATUS_C.error) : null;
-                const isSel = selected?.id === sc.id;
-                return (
-                  <div key={sc.id || i}
-                    style={{ border:`0.5px solid ${isSel?"#4d9de0":res?"#1e3a5f":"#1a2a3a"}`, borderRadius:8, padding:"12px 14px", marginBottom:8, background:isSel?"#0f1c2e":"#0d1520", cursor:"pointer" }}
-                    onClick={() => setSelected(isSel ? null : sc)}>
-                    <div style={{ display:"flex", alignItems:"flex-start", gap:8, marginBottom:4 }}>
-                      {rc && <span style={{ fontSize:14, flexShrink:0, marginTop:1 }}>{rc.icon}</span>}
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontSize:11, fontWeight:600, color:"#b0d0f0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{sc.name}</div>
-                        <div style={{ fontSize:9, color:"#4a7fa5", marginTop:2 }}>{sc.description?.slice(0,70)}</div>
+            <div style={{ display:"flex", height:"100%", overflow:"hidden" }}>
+
+              {/* Scenario list */}
+              <div style={{ width: openDetail ? 260 : "100%", flexShrink:0, overflowY:"auto", padding:"10px", borderRight: openDetail?"0.5px solid #1e3a5f":"none", transition:"width 0.2s" }}>
+                {visibleScenarios.map((sc, i) => {
+                  const res    = runResults[sc.id];
+                  const rc     = res ? (STATUS_C[res.status] || STATUS_C.error) : null;
+                  const isOpen = openDetail?.id === sc.id;
+                  return (
+                    <div key={sc.id || i}
+                      style={{ border:`0.5px solid ${isOpen?"#4d9de0":rc?rc.color+"40":"#1a2a3a"}`, borderRadius:7, padding:"10px 12px", marginBottom:7, background:isOpen?"#0f1c2e":"#0d1520", cursor:"pointer" }}
+                      onClick={() => setOpenDetail(isOpen ? null : sc)}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+                        {rc && <span style={{ fontSize:12, flexShrink:0 }}>{rc.icon}</span>}
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:10, fontWeight:600, color: isOpen?"#7ec8ff":"#b0d0f0", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{sc.name}</div>
+                          {!openDetail && <div style={{ fontSize:8, color:"#4a7fa5", marginTop:1 }}>{sc.description?.slice(0,60)}</div>}
+                        </div>
                       </div>
-                      <div style={{ display:"flex", gap:5, flexShrink:0, flexWrap:"wrap", justifyContent:"flex-end" }}>
-                        {sc.priority && <span style={{ fontSize:8, padding:"1px 6px", borderRadius:3, color:PRIORITY_C[sc.priority]||"#4a7fa5", background:`${PRIORITY_C[sc.priority]||"#4a7fa5"}15`, border:`0.5px solid ${PRIORITY_C[sc.priority]||"#4a7fa5"}40` }}>{sc.priority}</span>}
-                        {sc.category && <span style={{ fontSize:8, padding:"1px 6px", borderRadius:3, color:"#4a7fa5", background:"#0a0e12", border:"0.5px solid #1e3a5f" }}>{sc.category}</span>}
-                        {rc && <span style={{ fontSize:8, padding:"1px 6px", borderRadius:3, background:rc.bg, border:`0.5px solid ${rc.color}`, color:rc.color }}>{res.status}</span>}
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                        {sc.priority && <span style={{ fontSize:7, padding:"1px 5px", borderRadius:3, color:PRIORITY_C[sc.priority]||"#4a7fa5", background:`${PRIORITY_C[sc.priority]||"#4a7fa5"}15`, border:`0.5px solid ${PRIORITY_C[sc.priority]||"#4a7fa5"}30` }}>{sc.priority}</span>}
+                        <span style={{ fontSize:7, color:"#2d6aad" }}>{sc.steps?.length||0} steps</span>
+                        {rc && <span style={{ fontSize:7, padding:"1px 5px", borderRadius:3, background:rc.bg, border:`0.5px solid ${rc.color}`, color:rc.color }}>{res.status}</span>}
                       </div>
                     </div>
+                  );
+                })}
+              </div>
 
-                    {/* Step count */}
-                    <div style={{ fontSize:8, color:"#2d6aad" }}>{sc.steps?.length || 0} steps · {sc.tags?.join(", ")}</div>
+              {/* Detail panel */}
+              {openDetail && (
+                <div style={{ flex:1, overflow:"hidden" }}>
+                  <ScenarioDetailPanel
+                    scenario={openDetail}
+                    runResult={runResults[openDetail.id] || null}
+                    onRunScenario={() => runOne(openDetail)}
+                    onClose={() => setOpenDetail(null)}
+                    running={running}
+                  />
+                </div>
+              )}
 
-                    {/* Expanded detail */}
-                    {isSel && (
-                      <div style={{ marginTop:10, borderTop:"0.5px solid #1e3a5f", paddingTop:10 }}>
-                        {sc.steps?.map((step, j) => (
-                          <div key={j} style={{ display:"flex", gap:8, padding:"4px 0", fontSize:9, borderBottom:"0.5px solid #0d1a2a" }}>
-                            <span style={{ color:METHOD_COLORS?.[step.method]||"#4a7fa5", fontWeight:700, flexShrink:0, minWidth:40 }}>{step.method}</span>
-                            <span style={{ color:"#6a8aa8", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{step.path}</span>
-                            <span style={{ color:"#2d6aad", flexShrink:0 }}>{step.assertions?.length||0} asserts</span>
-                          </div>
-                        ))}
-                        <button onClick={e => { e.stopPropagation(); runOne(sc); }} disabled={running}
-                          style={{ marginTop:8, width:"100%", background:"#0a1a0a", border:"0.5px solid #4caf50", borderRadius:5, color:running?"#2d6aad":"#4caf50", cursor:running?"default":"pointer", fontSize:10, padding:"6px 0", fontFamily:"inherit" }}>
-                          ▶ Run this scenario
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {/* No scenario open — hint */}
+              {!openDetail && visibleScenarios.length === 0 && (
+                <div style={{ textAlign:"center", marginTop:60, color:"#1e3a5f", fontSize:11, padding:20 }}>
+                  No scenarios match the current filter.
+                </div>
+              )}
             </div>
           )}
 
           {/* Results tab */}
           {ready && activeTab === "results" && (
-            <div style={{ padding:"14px" }}>
+            <div style={{ overflowY:"auto", height:"100%" }}>
               {Object.keys(runResults).length === 0 && (
-                <div style={{ textAlign:"center", marginTop:40, color:"#1e3a5f", fontSize:11 }}>No results yet — run some scenarios.</div>
+                <div style={{ textAlign:"center", marginTop:40, color:"#1e3a5f", fontSize:11, padding:20 }}>
+                  No results yet — run some scenarios.
+                </div>
               )}
               {Object.entries(runResults).map(([id, result]) => {
-                const sc   = scenarios.find(s => s.id === id);
-                const rc   = STATUS_C[result.status] || STATUS_C.error;
+                const sc  = scenarios.find(s => s.id === id);
+                const rc  = STATUS_C[result.status] || STATUS_C.error;
                 return (
-                  <div key={id} style={{ border:`0.5px solid ${rc.color}40`, borderRadius:8, padding:"12px 14px", marginBottom:8, background:rc.bg }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-                      <span style={{ fontSize:14 }}>{rc.icon}</span>
+                  <div key={id} style={{ borderBottom:"0.5px solid #0d1a2a" }}>
+                    {/* Click to open full detail */}
+                    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", cursor:"pointer", background:openDetail?.id===id?"#0f1c2e":"transparent" }}
+                      onClick={() => { setOpenDetail(sc||null); setActiveTab("scenarios"); }}>
+                      <span style={{ fontSize:13 }}>{rc.icon}</span>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:11, fontWeight:600, color:"#b0d0f0" }}>{sc?.name || id}</div>
-                        <div style={{ fontSize:9, color:rc.color }}>{result.status?.toUpperCase()} · {result.passed||0}/{(result.passed||0)+(result.failed||0)} steps</div>
+                        <div style={{ fontSize:9, color:rc.color }}>{result.status?.toUpperCase()} · {result.passed||0}/{(result.passed||0)+(result.failed||0)} steps · {result.duration||0}ms</div>
                       </div>
+                      <span style={{ fontSize:9, color:"#2d6aad" }}>view →</span>
                     </div>
-                    {result.steps?.map((step, i) => (
-                      <div key={i} style={{ display:"flex", gap:6, padding:"2px 0", fontSize:9 }}>
-                        <span style={{ color:step.status==="pass"?"#4caf50":"#ff3b3b", flexShrink:0 }}>{step.status==="pass"?"✓":"✗"}</span>
-                        <span style={{ color:"#6a8aa8" }}>{step.description}</span>
-                        {step.statusCode && <span style={{ color:"#2d6aad", flexShrink:0 }}>{step.statusCode}</span>}
-                      </div>
-                    ))}
+                    {/* Step summary */}
+                    <div style={{ padding:"0 14px 8px" }}>
+                      {result.steps?.map((step, i) => (
+                        <div key={i} style={{ display:"flex", gap:8, padding:"3px 0", fontSize:9, borderBottom:"0.5px solid #0d1a2a" }}>
+                          <span style={{ color:step.status==="pass"?"#4caf50":"#ff3b3b", flexShrink:0 }}>{step.status==="pass"?"✓":"✗"}</span>
+                          <span style={{ color:"#6a8aa8", flex:1 }}>{step.name}</span>
+                          {step.statusCode && <span style={{ color:"#4d9de0", flexShrink:0 }}>{step.statusCode}</span>}
+                          {step.duration  && <span style={{ color:"#2d6aad",  flexShrink:0 }}>{step.duration}ms</span>}
+                          {step.error     && <span style={{ color:"#ff8c00",  flexShrink:0 }}>{step.error.slice(0,40)}</span>}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 );
               })}
