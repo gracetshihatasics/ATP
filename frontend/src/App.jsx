@@ -1,4 +1,4 @@
-import { useState }           from "react";
+import { useState, useEffect } from "react";
 import { GLOBAL_CSS }         from "./constants/theme.js";
 import { useDiscovery }       from "./hooks/useDiscovery.js";
 import { useRunner }          from "./hooks/useRunner.js";
@@ -13,15 +13,27 @@ import { ResultsView }        from "./components/results/ResultsView.jsx";
 import { ContextView }        from "./components/context/ContextView.jsx";
 import { SettingsView }       from "./components/settings/SettingsView.jsx";
 
+const BACKEND = "http://localhost:3579";
+
 export default function App() {
   const [nav, setNav]         = useState("discover");
   const [runTab, setRunTab]   = useState("runner");   // runner | api
   const [ctxTab, setCtxTab]   = useState("repos");    // repos | integrations
   const [setTab, setSetTab]   = useState("vault");    // vault | git | mcp
+  const [discPhase, setDiscPhase] = useState("idle");
+  const [advPhase,  setAdvPhase]  = useState("idle");
 
   const disc      = useDiscovery();
   const runner    = useRunner();
   const apiHealth = useApiHealth();
+
+  // Auto-load active URL on startup
+  useEffect(() => {
+    fetch(`${BACKEND}/api/urls/active`)
+      .then(r => r.json())
+      .then(data => { if (data.active?.url && !disc.url) disc.setUrl(data.active.url); })
+      .catch(() => {});
+  }, []);
 
   const handleRerun = (run) => {
     const useCase = {
@@ -55,12 +67,24 @@ export default function App() {
         wsStatus={runner.wsStatus} onConnect={runner.connect}
         resultsBadge={runner.resultsBadge}
         apiHealth={apiHealth}
+        discPhase={disc.phase}
+        advPhase={disc.advancedPhase}
       />
       <ApiKeyBanner apiHealth={apiHealth} onRecheck={apiHealth.recheck} />
 
-      {nav === "discover" && (
-        <DiscoveryView disc={disc} onLaunchRun={handleLaunchRun} />
-      )}
+      {/* Discovery always mounted so SSE stream survives navigation */}
+      <div style={{ display: nav === "discover" ? "block" : "none" }}>
+        <DiscoveryView
+          disc={disc}
+          onLaunchRun={handleLaunchRun}
+          onPhaseChange={(qPhase, aPhase) => {
+            // Bubble phases up for header indicator
+            setDiscPhase(qPhase);
+            setAdvPhase(aPhase);
+          }}
+        />
+      </div>
+
       {nav === "run" && (
         <RunView
           runner={runner} disc={disc}

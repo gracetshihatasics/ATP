@@ -26,3 +26,4 @@ Thumbs.db
 .git-config.json
 .integrations.json
 .testbed.json
+.urls.json

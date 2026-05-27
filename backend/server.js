@@ -29,6 +29,7 @@ import { resultsRoutes }      from "./src/results/routes.js";
 import { webhookRoutes }      from "./src/routes/webhookRoute.js";
 import { integrationRoutes, mcpRoutes } from "./src/routes/integrationRoutes.js";
 import { testbedRoutes, testbedExportRoutes } from "./src/testbed/testbedRoutes.js";
+import { urlRoutes }                          from "./src/routes/urlStore.js";
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 const app = express();
@@ -117,6 +118,9 @@ mcpRoutes(app);
 // Testbed routes
 testbedRoutes(app);
 testbedExportRoutes(app);
+
+// URL store
+urlRoutes(app);
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });

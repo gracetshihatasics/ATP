@@ -1,4 +1,4 @@
-export function Header({ nav, setNav, wsStatus, onConnect, resultsBadge, apiHealth }) {
+export function Header({ nav, setNav, wsStatus, onConnect, resultsBadge, apiHealth, discPhase, advPhase }) {
   const wc = wsStatus === "connected" ? "#4caf50" : wsStatus === "connecting" ? "#ff8c00" : "#ff3b3b";
 
   const apiColor =
@@ -20,8 +20,10 @@ export function Header({ nav, setNav, wsStatus, onConnect, resultsBadge, apiHeal
       ? "Cannot reach api.anthropic.com — check VPN/firewall"
       : apiHealth?.error || apiLabel;
 
+  const isDiscovering = discPhase === "discovering" || advPhase === "running";
+
   const NAV = [
-    { id:"discover", label:"◈ Discover" },
+    { id:"discover", label:"◈ Discover", running: isDiscovering },
     { id:"run",      label:"▶ Run" },
     { id:"results",  label:"📊 Results", badge: resultsBadge },
     { id:"context",  label:"🔗 Context" },
@@ -55,10 +57,23 @@ export function Header({ nav, setNav, wsStatus, onConnect, resultsBadge, apiHeal
               letterSpacing: "0.04em",
               position:     "relative",
               transition:   "color 0.15s, border-color 0.15s",
+              display:      "flex",
+              alignItems:   "center",
+              gap:          6,
             }}
             onMouseEnter={e => { if (nav !== item.id) e.currentTarget.style.color = "#7ec8ff"; }}
             onMouseLeave={e => { if (nav !== item.id) e.currentTarget.style.color = "#4a7fa5"; }}>
             {item.label}
+            {/* Live discovery indicator */}
+            {item.running && nav !== item.id && (
+              <span style={{ display:"inline-flex", alignItems:"center", gap:3, fontSize:8, color:"#c8a0f0", background:"#1a0a2e", borderRadius:3, padding:"1px 5px", border:"0.5px solid #5b3a8a" }}>
+                <span style={{ width:5, height:5, borderRadius:"50%", background:"#c8a0f0", display:"inline-block", animation:"pulse 0.8s infinite" }} />
+                running
+              </span>
+            )}
+            {item.running && nav === item.id && (
+              <span style={{ width:6, height:6, borderRadius:"50%", background:"#c8a0f0", display:"inline-block", animation:"pulse 0.8s infinite" }} />
+            )}
             {item.badge > 0 && (
               <span style={{ position:"absolute", top:8, right:6, background:"#ff3b3b", color:"#fff", fontSize:8, fontWeight:700, width:14, height:14, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid #080c0f" }}>
                 {item.badge > 9 ? "9+" : item.badge}

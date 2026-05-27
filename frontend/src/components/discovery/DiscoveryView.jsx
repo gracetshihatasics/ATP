@@ -1,4 +1,4 @@
-import { useState }                    from "react";
+import { useState, useEffect }         from "react";
 import { InputPanel }                  from "./InputPanel.jsx";
 import { UseCaseList }                 from "./UseCaseList.jsx";
 import { UseCaseDetail }               from "./UseCaseDetail.jsx";
@@ -10,7 +10,7 @@ import { CodeIntelligencePanel }       from "../intelligence/CodeIntelligencePan
 import { ExportProjectModal }          from "../testbed/ExportProjectModal.jsx";
 import { useAdvancedDiscovery }        from "../../hooks/useAdvancedDiscovery.js";
 
-export function DiscoveryView({ disc, onLaunchRun }) {
+export function DiscoveryView({ disc, onLaunchRun, onPhaseChange }) {
   const {
     url, setUrl, credentialId, onCredentialChange,
     phase, log, logRef, plan, setPlan, discover, cancelDiscovery,
@@ -23,6 +23,9 @@ export function DiscoveryView({ disc, onLaunchRun }) {
   const [mainMode, setMainMode] = useState("quick"); // quick | advanced
   const [showExport, setShowExport] = useState(false);
   const adv = useAdvancedDiscovery();
+
+  // Bubble phases up to App so header indicator works from any tab
+  useEffect(() => { onPhaseChange?.(phase, adv.phase); }, [phase, adv.phase]);
 
   const handleAdvancedDiscover = () => {
     setMainMode("advanced");

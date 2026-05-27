@@ -39,7 +39,7 @@ export async function postCommitStatus(prEvent, status, description, token) {
 /**
  * Post a detailed comment to the PR with full test results.
  */
-export async function postPRComment(prEvent, { diffAnalysis, testResults, updatedTests, newTests }, token) {
+export async function postPRComment(prEvent, { diffAnalysis, testResults, updatedTests, newTests, generatedFiles = [], atpPrUrl = null }, token) {
   if (!token) return;
 
   const passed  = testResults.filter(r => r.status === "pass").length;
@@ -65,6 +65,17 @@ export async function postPRComment(prEvent, { diffAnalysis, testResults, update
     `| Tests Failed | ${failed} |`,
     `| Est. Test Time | ${diffAnalysis.estimatedTestTime || "—"} |`,
     ``,
+    generatedFiles?.length ? [
+      `### 🧪 ATP Generated Tests`,
+      `ATP automatically wrote **${generatedFiles.length}** test file(s) for the changes in this PR.`,
+      ...generatedFiles.map(f =>
+        f.action === "created"
+          ? `- ✅ **Created:** \`${f.fileName}\` — ${f.useCase?.title || "new test"}`
+          : `- 🔄 **Updated:** \`${f.path}\` — ${f.reason || "updated for PR changes"}`
+      ),
+      atpPrUrl ? `\n**[View ATP's test PR →](${atpPrUrl})**` : "_Tests saved locally in ATP — connect a test repo in 🧪 Repos to enable auto-push._",
+      ``,
+    ].join("\n") : "",
     `### 🔍 AI Change Analysis`,
     `> ${diffAnalysis.summary}`,
     ``,

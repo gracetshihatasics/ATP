@@ -10,14 +10,15 @@ const RISK_C = {
 };
 
 const PHASES = {
-  setup:     "Setting up...",
-  diff:      "Fetching changes...",
-  analysis:  "◈ AI analysing diff...",
-  update:    "Updating tests...",
-  testing:   "Running tests...",
-  reporting: "Posting to GitHub...",
-  done:      "Complete",
-  error:     "Error",
+  setup:      "Setting up...",
+  diff:       "Fetching changes...",
+  analysis:   "◈ AI analysing diff...",
+  update:     "Reviewing existing tests...",
+  generating: "🧪 Generating test files...",
+  testing:    "Running tests...",
+  reporting:  "Posting to GitHub...",
+  done:       "Complete",
+  error:      "Error",
 };
 
 export function GitIntegrationPanel() {
@@ -499,6 +500,33 @@ export function GitIntegrationPanel() {
                 ))}
               </div>
             </div>
+
+            {/* Affected + new tests */}
+            {/* Phase B — ATP generated tests */}
+            {(selected.atpPrUrl || selected.generatedFiles?.length > 0) && (
+              <div style={{ border:"0.5px solid #4caf5050", borderRadius:8, padding:"14px 16px", marginBottom:12, background:"#0a1a0a" }}>
+                <div style={{ fontSize:10, fontWeight:600, color:"#4caf50", marginBottom:10 }}>🧪 Phase B — ATP Generated Tests</div>
+                {selected.atpPrUrl && (
+                  <div style={{ marginBottom:10 }}>
+                    <a href={selected.atpPrUrl} target="_blank" rel="noreferrer"
+                      style={{ fontSize:11, color:"#4caf50", textDecoration:"none", background:"#0a2010", border:"0.5px solid #4caf50", borderRadius:5, padding:"6px 12px", display:"inline-block" }}>
+                      View ATP Test PR →
+                    </a>
+                  </div>
+                )}
+                {selected.generatedFiles?.length > 0 && selected.generatedFiles.map((f,i) => (
+                  <div key={i} style={{ display:"flex", gap:6, padding:"4px 0", borderBottom:"0.5px solid #0d2a0d", fontSize:10 }}>
+                    <span style={{ color:f.action==="created"?"#4caf50":"#f0c040" }}>{f.action==="created"?"✅":"🔄"}</span>
+                    <span style={{ color:"#a0d0a0" }}>{f.fileName || f.path}</span>
+                  </div>
+                ))}
+                {!selected.atpPrUrl && (
+                  <div style={{ fontSize:9, color:"#4a7fa5", marginTop:6 }}>
+                    Tests saved locally. Connect a test repo in 🧪 Repos to enable auto-push.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Affected + new tests */}
             {(selected.affectedTests?.length > 0 || selected.newTests?.length > 0) && (
