@@ -109,12 +109,32 @@ Aim for 80%+ endpoint coverage. Include:
 Group related scenarios. Prioritise Critical and High. Do not skip any endpoint group.`;
 
 export async function buildScenarios(spec, credentials = {}, context = "", mode = "quick") {
-  // For quick mode cap at 40 endpoints to avoid truncation
-  // For deep mode use all but warn if very large
-  const maxEndpoints = mode === "quick" ? 40 : 80;
-  const endpoints    = spec.endpoints?.slice(0, maxEndpoints) || [];
+  // For quick mode: prioritise variety — pick endpoints across all groups, max 30
+  // For deep mode: use up to 80 endpoints
+  const maxEndpoints = mode === "quick" ? 30 : 80;
 
-  if (spec.endpoints?.length > maxEndpoints) {
+  let endpoints = spec.endpoints || [];
+  if (mode === "quick" && endpoints.length > maxEndpoints) {
+    // Sample across groups for better coverage
+    const byGroup = {};
+    endpoints.forEach(e => {
+      const g = e.tags?.[0] || e.folder || "default";
+      if (!byGroup[g]) byGroup[g] = [];
+      byGroup[g].push(e);
+    });
+    const groups = Object.values(byGroup);
+    const sampled = [];
+    let i = 0;
+    while (sampled.length < maxEndpoints) {
+      const g = groups[i % groups.length];
+      if (g.length > 0) sampled.push(g.shift());
+      i++;
+      if (groups.every(g => g.length === 0)) break;
+    }
+    endpoints = sampled;
+    console.log(`[ScenarioBuilder] Sampled ${endpoints.length} endpoints across ${groups.length} groups from ${spec.endpoints.length} total`);
+  } else if (endpoints.length > maxEndpoints) {
+    endpoints = endpoints.slice(0, maxEndpoints);
     console.log(`[ScenarioBuilder] Capped ${spec.endpoints.length} endpoints to ${maxEndpoints} for ${mode} mode`);
   }
 
@@ -160,7 +180,7 @@ export async function buildScenarios(spec, credentials = {}, context = "", mode 
     ? DEEP_PROMPT(cappedSpec, contextNote, endpointList, groupList)
     : QUICK_PROMPT(cappedSpec, contextNote, endpointList);
 
-  const maxTokens = mode === "deep" ? 12000 : 8000;
+  const maxTokens = mode === "deep" ? 16000 : 12000;
 
   const response = await client.messages.create({
     model:      config.model,
@@ -169,8 +189,19 @@ export async function buildScenarios(spec, credentials = {}, context = "", mode 
     messages:   [{ role: "user", content: userPrompt }],
   });
 
-  const raw       = response.content[0]?.text ?? "";
-  const scenarios = extractJSONArray(raw);
+  const raw      = response.content[0]?.text ?? "";
+  const stopReason = response.stop_reason;
+
+  // If response was cut off, try to recover partial JSON
+  let scenarios = extractJSONArray(raw);
+
+  if (scenarios.length === 0 && stopReason === "max_tokens") {
+    console.warn("[ScenarioBuilder] Response truncated — attempting partial JSON recovery");
+    scenarios = recoverPartialJSONArray(raw);
+    if (scenarios.length > 0) {
+      console.log(`[ScenarioBuilder] Recovered ${scenarios.length} scenario(s) from truncated response`);
+    }
+  }
 
   // Stamp each with metadata
   return scenarios.map((s, i) => ({
@@ -298,17 +329,52 @@ function generatePostmanTests(assertions = []) {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function extractJSONArray(raw) {
   if (!raw?.trim()) return [];
-
-  // Try direct parse
   try { const r = JSON.parse(raw.trim()); return Array.isArray(r) ? r : (r.scenarios || r.tests || []); } catch {}
-
-  // Try extracting between first [ and last ]
   const s = raw.indexOf("["), e = raw.lastIndexOf("]");
   if (s !== -1 && e > s) {
     try { const r = JSON.parse(raw.slice(s, e + 1)); return Array.isArray(r) ? r : []; } catch {}
   }
-
-  // Last resort: try to find JSON objects in the text
   console.error("[ScenarioBuilder] Failed to parse JSON array. Raw length:", raw.length, "First 200:", raw.slice(0,200));
   return [];
+}
+
+/**
+ * Recover complete scenario objects from a truncated JSON array.
+ * Extracts all fully-formed { ... } objects from the partial array.
+ */
+function recoverPartialJSONArray(raw) {
+  const start = raw.indexOf("[");
+  if (start === -1) return [];
+
+  const recovered = [];
+  let depth = 0;
+  let objStart = -1;
+
+  for (let i = start + 1; i < raw.length; i++) {
+    const ch = raw[i];
+    // Skip strings
+    if (ch === '"') {
+      i++;
+      while (i < raw.length && raw[i] !== '"') {
+        if (raw[i] === "\\") i++; // skip escaped chars
+        i++;
+      }
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && objStart !== -1) {
+        try {
+          const obj = JSON.parse(raw.slice(objStart, i + 1));
+          if (obj.name && obj.steps) recovered.push(obj);
+        } catch {}
+        objStart = -1;
+      }
+    }
+  }
+
+  return recovered;
 }
