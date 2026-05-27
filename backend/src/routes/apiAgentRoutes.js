@@ -196,8 +196,12 @@ async function runScenarioRoute(req, res) {
 
   try {
     const result = await runScenario(scenario, spec?.baseUrl||"", credentials||{}, evt => {
-      if (evt.type==="step") send({ type:"step", ...evt });
-      else if (evt.type==="log") send({ type:"log", msg:evt.msg, level:evt.level||"info" });
+      if (evt.type==="step_start")   send({ type:"log", msg:`▶ [${evt.stepIndex+1}/${evt.totalSteps}] ${evt.method} — ${evt.name}${evt.neededVars?.length?` (needs: ${evt.neededVars.map(v=>`{{${v}}}`).join(", ")})`:""} `, level:"system" });
+      if (evt.type==="step_done")    send({ type:"step", description:evt.name, status:evt.status, statusCode:evt.statusCode, duration:evt.duration, url:evt.url });
+      if (evt.type==="step_error")   send({ type:"log", msg:`  ✗ ${evt.name}: ${evt.error}`, level:"error" });
+      if (evt.type==="capture")      send({ type:"log", msg:`  ↳ captured {{${evt.varName}}} = ${evt.value}`, level:"ai" });
+      if (evt.type==="capture_miss") send({ type:"log", msg:`  ⚠ ${evt.note}`, level:"warn" });
+      if (evt.type==="log")          send({ type:"log", msg:evt.msg, level:evt.level||"info" });
     });
     if (suiteId) scenarioStore.updateSuiteResults(suiteId, scenario.id, result);
     const saved = resultsStore.save({
@@ -236,8 +240,12 @@ async function runAllScenariosRoute(req, res) {
     send({ type:"scenario_start", index:i, total:toRun.length, name:sc.name });
     try {
       const result = await runScenario(sc, spec?.baseUrl||"", credentials||{}, evt => {
-        if (evt.type==="step") send({ type:"step", scenarioIndex:i, ...evt });
-        else if (evt.type==="log") send({ type:"log", msg:evt.msg, level:evt.level||"info" });
+        if (evt.type==="step_start")   send({ type:"log", msg:`  ▶ [${evt.stepIndex+1}/${evt.totalSteps}] ${evt.method} — ${evt.name}`, level:"system" });
+        if (evt.type==="step_done")    send({ type:"log", msg:`  ${evt.status==="pass"?"✓":"✗"} ${evt.name} (${evt.statusCode}, ${evt.duration}ms)`, level:evt.status==="pass"?"success":"error" });
+        if (evt.type==="step_error")   send({ type:"log", msg:`  ✗ ${evt.name}: ${evt.error}`, level:"error" });
+        if (evt.type==="capture")      send({ type:"log", msg:`    ↳ {{${evt.varName}}} = ${evt.value}`, level:"ai" });
+        if (evt.type==="capture_miss") send({ type:"log", msg:`    ⚠ ${evt.note}`, level:"warn" });
+        if (evt.type==="log")          send({ type:"log", msg:evt.msg, level:evt.level||"info" });
       });
       if (suiteId) scenarioStore.updateSuiteResults(suiteId, sc.id, result);
       all.push({ ...result, name:sc.name });

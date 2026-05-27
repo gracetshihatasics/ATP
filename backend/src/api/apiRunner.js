@@ -36,22 +36,33 @@ export async function runScenario(scenario, baseUrl, credentials = {}, onEvent =
 
   for (let i = 0; i < (scenario.steps ?? []).length; i++) {
     const step = scenario.steps[i];
-    onEvent({ type:"step_start", stepIndex:i, stepId:step.id, name:step.name, method:step.method, path:step.path });
+
+    // Emit step start — show what variables this step needs
+    const neededVars = findUsedVars(step);
+    onEvent({
+      type:"step_start", stepIndex:i, stepId:step.id,
+      name:step.name, method:step.method, path:step.path,
+      neededVars, totalSteps: scenario.steps.length,
+    });
 
     try {
+      // ── Execute step and WAIT for full response before continuing ──────────
       const result = await runStep(step, baseUrl, context);
 
-      // Capture values from response into context for next steps
+      // ── Only after full response received — extract captures ───────────────
       const captures = [];
       if (step.captureFrom && result.responseBody) {
         for (const [varName, jsonPath] of Object.entries(step.captureFrom)) {
           const value = extractByJsonPath(result.responseBody, jsonPath);
-          if (value !== undefined) {
+          if (value !== undefined && value !== null) {
             context[varName] = value;
-            const masked = isSensitiveKey(varName) ? "••••••••" : String(value).slice(0,80);
-            captures.push({ varName, jsonPath, value: masked, sensitive: isSensitiveKey(varName) });
-            captureLog.push({ step: step.name, varName, jsonPath });
+            const masked = isSensitiveKey(varName) ? "••••••••" : String(value).slice(0, 80);
+            captures.push({ varName, jsonPath, value:masked, sensitive:isSensitiveKey(varName) });
+            captureLog.push({ step:step.name, varName, jsonPath });
             onEvent({ type:"capture", stepId:step.id, varName, value:masked, jsonPath });
+          } else {
+            onEvent({ type:"capture_miss", stepId:step.id, varName, jsonPath,
+              note:`Path "${jsonPath}" not found in response — next steps using {{${varName}}} may fail` });
           }
         }
       }
@@ -60,7 +71,7 @@ export async function runScenario(scenario, baseUrl, credentials = {}, onEvent =
         ...result,
         stepIndex:   i,
         captures,
-        usedVars:    findUsedVars(step),
+        usedVars:    neededVars,
         captureFrom: step.captureFrom || {},
         dependsOn:   step.dependsOn || null,
       };
@@ -68,14 +79,23 @@ export async function runScenario(scenario, baseUrl, credentials = {}, onEvent =
       stepResults.push(stepResult);
       onEvent({ type:"step_done", stepIndex:i, stepId:step.id, ...stepResult });
 
+      // ── Only proceed to next step after this one is fully complete ─────────
+      // (the await above ensures this — no parallelism)
+
     } catch (err) {
       const fail = {
-        stepIndex: i, stepId:step.id, name:step.name,
+        stepIndex:i, stepId:step.id, name:step.name,
         status:"error", error:err.message, assertions:[],
         method:step.method, path:step.path, captures:[],
       };
       stepResults.push(fail);
       onEvent({ type:"step_error", stepIndex:i, stepId:step.id, error:err.message, name:step.name });
+
+      // Stop scenario execution on critical failure if step is required
+      if (step.stopOnFailure !== false) {
+        onEvent({ type:"log", msg:`⚠ Step ${i+1} failed — remaining ${scenario.steps.length - i - 1} step(s) skipped`, level:"warn" });
+        break;
+      }
     }
   }
 
@@ -100,62 +120,114 @@ export async function runScenario(scenario, baseUrl, credentials = {}, onEvent =
   return result;
 }
 
+const STEP_TIMEOUT_MS  = 30_000; // 30s per step
+const MAX_RETRIES      = 2;      // retry network errors
+const RETRY_DELAY_MS   = 1_000;
+
 async function runStep(step, baseUrl, context) {
-  const path    = substitute(step.path || "", context);
-  const rawBody = step.body ? JSON.parse(substitute(JSON.stringify(step.body), context)) : undefined;
-  const rawHeaders = JSON.parse(substitute(
-    JSON.stringify(step.headers ?? { "Content-Type":"application/json" }), context
+  // ── 1. Substitute all {{variables}} before making any call ───────────────
+  const resolvedPath = substitute(step.path || "", context);
+  const resolvedBody = step.body
+    ? JSON.parse(substitute(JSON.stringify(step.body), context))
+    : undefined;
+  const resolvedHeaders = JSON.parse(substitute(
+    JSON.stringify(step.headers ?? { "Content-Type": "application/json" }), context
   ));
-  const params = step.params
-    ? new URLSearchParams(Object.fromEntries(
-        Object.entries(step.params).map(([k,v]) => [k, substitute(String(v), context)])
-      )).toString()
+  const resolvedParams = step.params
+    ? Object.fromEntries(
+        Object.entries(step.params).map(([k, v]) => [k, substitute(String(v), context)])
+      )
+    : {};
+  const queryString = Object.keys(resolvedParams).length
+    ? "?" + new URLSearchParams(resolvedParams).toString()
     : "";
 
-  const fullUrl = `${baseUrl}${path}${params ? `?${params}` : ""}`;
+  const fullUrl = `${baseUrl}${resolvedPath}${queryString}`;
 
-  const fetchOptions = { method:step.method, headers:rawHeaders };
-  if (rawBody && !["GET","HEAD"].includes(step.method)) {
-    fetchOptions.body = JSON.stringify(rawBody);
+  const fetchOptions = {
+    method:  step.method,
+    headers: resolvedHeaders,
+  };
+  if (resolvedBody && !["GET", "HEAD"].includes(step.method)) {
+    fetchOptions.body = JSON.stringify(resolvedBody);
   }
 
-  const startTime = Date.now();
-  let response, responseText;
-  try {
-    response     = await fetch(fullUrl, fetchOptions);
-    responseText = await response.text();
-  } catch (err) {
-    throw new Error(`Network error: ${err.message}`);
+  // ── 2. Execute with timeout + automatic retry on network error ────────────
+  let response     = null;
+  let responseText = null;
+  let lastError    = null;
+  const startTime  = Date.now();
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Brief pause before retry
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId  = setTimeout(() => controller.abort(), STEP_TIMEOUT_MS);
+
+      // ── AWAIT the full response — do not proceed until complete ──────────
+      response = await fetch(fullUrl, { ...fetchOptions, signal: controller.signal });
+
+      // ── AWAIT the full response body before doing anything else ──────────
+      responseText = await response.text();
+
+      clearTimeout(timeoutId);
+      lastError = null;
+      break; // success — exit retry loop
+
+    } catch (err) {
+      lastError = err;
+      const isRetryable = err.name === "AbortError"
+        || err.message?.includes("ECONNRESET")
+        || err.message?.includes("ECONNREFUSED")
+        || err.message?.includes("ETIMEDOUT")
+        || err.message?.includes("network");
+
+      if (!isRetryable || attempt === MAX_RETRIES) {
+        const msg = err.name === "AbortError"
+          ? `Step timed out after ${STEP_TIMEOUT_MS / 1000}s — no response received`
+          : `Network error on attempt ${attempt + 1}: ${err.message}`;
+        throw new Error(msg);
+      }
+      // else: retry
+    }
   }
+
   const duration = Date.now() - startTime;
 
+  // ── 3. Parse response body — fully awaited above ──────────────────────────
   let responseBody = null;
-  try { responseBody = responseText ? JSON.parse(responseText) : null; } catch {}
+  let parseError   = null;
+  try {
+    responseBody = responseText ? JSON.parse(responseText) : null;
+  } catch (e) {
+    parseError  = `Response is not JSON: ${responseText?.slice(0, 100)}`;
+    responseBody = { _raw: responseText?.slice(0, 500) };
+  }
 
+  // ── 4. Run assertions against the complete response ───────────────────────
   const assertionResults = runAssertions(step.assertions ?? [], response.status, responseBody, duration);
-  const allPassed = assertionResults.every(a => a.passed);
-
-  // Mask sensitive headers/body for display
-  const safeHeaders  = maskSensitive(rawHeaders);
-  const safeReqBody  = rawBody ? maskSensitive(rawBody) : null;
-  const safeRespBody = responseBody;
+  const allPassed        = assertionResults.every(a => a.passed);
 
   return {
     stepId:          step.id,
     name:            step.name,
     method:          step.method,
-    path,
+    path:            resolvedPath,
     url:             fullUrl,
     statusCode:      response.status,
     duration,
-    // Request details (safe for display)
-    requestHeaders:  safeHeaders,
-    requestBody:     safeReqBody,
-    requestParams:   step.params || {},
-    // Response details
-    responseBody:    safeRespBody,
-    responseHeaders: Object.fromEntries([...response.headers.entries()].filter(([k])=>!isSensitiveKey(k))),
-    responseText:    responseText?.slice(0, 2000),
+    requestHeaders:  maskSensitive(resolvedHeaders),
+    requestBody:     resolvedBody ? maskSensitive(resolvedBody) : null,
+    requestParams:   resolvedParams,
+    responseBody,
+    responseHeaders: Object.fromEntries(
+      [...response.headers.entries()].filter(([k]) => !isSensitiveKey(k))
+    ),
+    parseError:      parseError || null,
     status:          allPassed ? "pass" : "fail",
     assertions:      assertionResults,
   };

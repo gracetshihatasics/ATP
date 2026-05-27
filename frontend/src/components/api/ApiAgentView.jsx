@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { CredentialPicker }     from "../shared/CredentialPicker.jsx";
-import { resolveContext }        from "../../services/vault.js";
 import { METHOD_COLORS }         from "../../constants/theme.js";
 import { ScenarioDetailPanel }   from "./ScenarioDetailPanel.jsx";
-
+import { RunConfigPanel }        from "./RunConfigPanel.jsx";
 const BACKEND = "http://localhost:3579";
 
 const STATUS_C = {
@@ -42,7 +40,8 @@ export function ApiAgentView() {
   const [mode,         setMode]         = useState("quick"); // quick | deep
   const [filter,       setFilter]       = useState("all");
   const [contextUsed,  setContextUsed]  = useState(false);
-  const [credentialId, setCredentialId] = useState(null);
+  const [credentialId, setCredentialId] = useState(null); // kept for build context
+  const [runConfig,    setRunConfig]    = useState({ baseUrl:"", credentials:{}, authType:"none", hasAuth:false });
 
   // ── Run state ─────────────────────────────────────────────────────────────
   const [phase,        setPhase]        = useState("idle");
@@ -144,13 +143,12 @@ export function ApiAgentView() {
     if (!spec) return;
     setPhase("building"); setScenarios([]); setSuiteResult(null); setRunResults({});
 
-    let credentials = {};
-    if (credentialId) credentials = await resolveContext(credentialId);
+    const credentials = runConfig.credentials || {};
 
     const res     = await fetch(`${BACKEND}/api/agent/build`, {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({
-        spec, url: spec.baseUrl, mode, credentials,
+        spec, url: runConfig.baseUrl || spec.baseUrl, mode, credentials,
         integrationId: selectedSrc?.integrationId,
         collectionId:  collection?.id,
       }),
@@ -195,12 +193,11 @@ export function ApiAgentView() {
     setRunResults(p => ({ ...p, [scenario.id]: { status:"running" } }));
     addLog(`▶ Running: ${scenario.name}`, "system");
 
-    let credentials = {};
-    if (credentialId) credentials = await resolveContext(credentialId);
+    const credentials = runConfig.credentials || {};
 
     const res     = await fetch(`${BACKEND}/api/agent/run`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ scenario, spec, credentials, suiteId }),
+      body: JSON.stringify({ scenario, spec: { ...spec, baseUrl: runConfig.baseUrl || spec?.baseUrl }, credentials, suiteId }),
     });
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
@@ -233,12 +230,11 @@ export function ApiAgentView() {
     if (filter !== "all") toRun = toRun.filter(s => s.priority?.toLowerCase() === filter);
     addLog(`▶ Running ${toRun.length} scenario(s) [${filter}]...`, "system");
 
-    let credentials = {};
-    if (credentialId) credentials = await resolveContext(credentialId);
+    const credentials = runConfig.credentials || {};
 
     const res     = await fetch(`${BACKEND}/api/agent/run-all`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ scenarios:toRun, spec, credentials, filter, suiteId }),
+      body: JSON.stringify({ scenarios:toRun, spec: { ...spec, baseUrl: runConfig.baseUrl || spec?.baseUrl }, credentials, filter, suiteId }),
     });
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
@@ -393,10 +389,20 @@ export function ApiAgentView() {
               </div>
             </div>
 
-            {/* Filter + Credentials */}
+            {/* Run Config — base URL, auth, env vars */}
+            <div style={{ padding:"10px 14px", borderBottom:"0.5px solid #1e3a5f" }}>
+              <div style={{ fontSize:9, color:"#2d6aad", marginBottom:8, textTransform:"uppercase", letterSpacing:"0.08em", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <span>Run Configuration</span>
+                {runConfig.hasAuth && <span style={{ color:"#4caf50", fontSize:8, textTransform:"none" }}>🔑 auth set</span>}
+                {runConfig.baseUrl && <span style={{ color:"#7ec8ff", fontSize:8, textTransform:"none", overflow:"hidden", textOverflow:"ellipsis", maxWidth:100 }}>{runConfig.baseUrl.replace(/^https?:\/\//,"").slice(0,20)}</span>}
+              </div>
+              <RunConfigPanel spec={spec} onConfigChange={setRunConfig} />
+            </div>
+
+            {/* Filter */}
             <div style={{ padding:"10px 14px", borderBottom:"0.5px solid #1e3a5f" }}>
               <div style={{ fontSize:9, color:"#2d6aad", marginBottom:5 }}>Run Filter</div>
-              <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:10 }}>
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
                 {["all","critical","high","medium","low"].map(f => (
                   <button key={f} onClick={() => setFilter(f)}
                     style={{ background:filter===f?"#1a3050":"#0d1520", border:`0.5px solid ${filter===f?"#4d9de0":"#1e3a5f"}`, borderRadius:4, color:filter===f?"#7ec8ff":"#4a7fa5", cursor:"pointer", fontSize:8, padding:"3px 7px", fontFamily:"inherit", textTransform:"capitalize" }}>
@@ -404,8 +410,6 @@ export function ApiAgentView() {
                   </button>
                 ))}
               </div>
-              <div style={{ fontSize:9, color:"#2d6aad", marginBottom:5 }}>Credentials</div>
-              <CredentialPicker value={credentialId} onChange={setCredentialId} />
             </div>
 
             {/* Actions */}
@@ -614,6 +618,7 @@ export function ApiAgentView() {
                   <ScenarioDetailPanel
                     scenario={openDetail}
                     runResult={runResults[openDetail.id] || null}
+                    runConfig={runConfig}
                     onRunScenario={() => runOne(openDetail)}
                     onClose={() => setOpenDetail(null)}
                     running={running}

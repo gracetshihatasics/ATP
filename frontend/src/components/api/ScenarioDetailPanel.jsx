@@ -25,7 +25,8 @@ function renderValue(key, val) {
   return <span style={{ color:"#a0d0a0" }}>{String(val)}</span>;
 }
 
-export function ScenarioDetailPanel({ scenario, runResult, stepResults = {}, onRunScenario, onClose, running }) {
+export function ScenarioDetailPanel({ scenario, runResult, stepResults = {}, runConfig, onRunScenario, onClose, running }) {
+  const effectiveBaseUrl = runConfig?.baseUrl || "not set";
   const steps = scenario.steps || [];
   const allCaptures = {}; // varName → stepName that captures it
 
@@ -80,6 +81,32 @@ export function ScenarioDetailPanel({ scenario, runResult, stepResults = {}, onR
             )}
           </div>
         </div>
+      </div>
+
+      {/* Run config status bar */}
+      <div style={{ padding:"6px 18px", borderBottom:"0.5px solid #1e3a5f", background:"#060a0d", flexShrink:0, display:"flex", gap:16, alignItems:"center", flexWrap:"wrap" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <span style={{ fontSize:8, color:"#2d6aad" }}>BASE URL</span>
+          {runConfig?.baseUrl
+            ? <span style={{ fontSize:9, color:"#7ec8ff", fontFamily:"monospace" }}>{runConfig.baseUrl}</span>
+            : <span style={{ fontSize:9, color:"#ff8c00" }}>⚠ not set — set in Run Configuration</span>
+          }
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <span style={{ fontSize:8, color:"#2d6aad" }}>AUTH</span>
+          {!runConfig?.hasAuth
+            ? <span style={{ fontSize:9, color:"#4a7fa5" }}>none</span>
+            : <span style={{ fontSize:9, color:"#4caf50" }}>🔑 {runConfig.authType}</span>
+          }
+        </div>
+        {runConfig?.credentials && Object.keys(runConfig.credentials).length > 0 && (
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <span style={{ fontSize:8, color:"#2d6aad" }}>VARS</span>
+            <span style={{ fontSize:9, color:"#c8a0f0" }}>
+              {Object.keys(runConfig.credentials).map(k => `{{${k}}}`).join(" ")}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Chain overview */}
