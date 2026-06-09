@@ -1,11 +1,11 @@
 import { parseSwaggerUrl, parsePostmanCollection } from "../api/swaggerParser.js";
 import { buildScenarios, scenariosToPostmanCollection, scenariosToJestFile } from "../api/scenarioBuilder.js";
-import { runScenario }       from "../api/apiRunner.js";
 import { integrationStore }  from "../integrations/integrationStore.js";
 import { getContextSummary } from "../integrations/contextBuilder.js";
 import { scenarioStore }     from "../api/scenarioStore.js";
-import { resultsStore }      from "../results/store.js";
-import { handle, sendSSEError, requireFields, ATPError, ErrorType } from "../utils/errors.js";
+import { runStore }          from "../api/runStore.js";
+import { startRun, startSuiteRun, subscribe } from "../api/runExecutor.js";
+import { handle, sendSSEError, ATPError, ErrorType } from "../utils/errors.js";
 
 // ── List API sources ──────────────────────────────────────────────────────────
 async function listApiSourcesRoute(req, res) {
@@ -20,10 +20,10 @@ async function listApiSourcesRoute(req, res) {
         ? `https://api.getpostman.com/collections?workspace=${p.config.workspaceId}`
         : "https://api.getpostman.com/collections";
       const r = await fetch(url, { headers });
-      if (!r.ok) throw new ATPError(`Postman returned ${r.status}`, ErrorType.EXTERNAL, { context:{ integration:p.name } });
+      if (!r.ok) throw new ATPError(`Postman returned ${r.status}`, ErrorType.EXTERNAL);
       const { collections } = await r.json();
       sources.push({ integrationId:p.id, name:p.name, type:"postman",
-        collections: (collections||[]).map(c => ({ id:c.uid, name:c.name })) });
+        collections:(collections||[]).map(c => ({ id:c.uid, name:c.name })) });
     } catch (e) {
       sources.push({ integrationId:p.id, name:p.name, type:"postman", collections:[], error:e.message });
     }
@@ -42,25 +42,22 @@ async function importSpecRoute(req, res) {
   if (integrationId) {
     const intg = integrationStore.get(integrationId);
     if (!intg) throw new ATPError("Integration not found", ErrorType.NOT_FOUND, { context:{ integrationId } });
-
     if (intg.type === "postman") {
-      if (!collectionId) throw new ATPError("collectionId is required for Postman", ErrorType.VALIDATION);
+      if (!collectionId) throw new ATPError("collectionId required for Postman", ErrorType.VALIDATION);
       const headers = { "X-Api-Key":intg.config.apiKey, Accept:"application/json" };
       const r = await fetch(`https://api.getpostman.com/collections/${collectionId}`, { headers });
-      if (!r.ok) throw new ATPError(`Postman returned ${r.status} fetching collection`, ErrorType.EXTERNAL, {
-        context: { collectionId }, hint: "Check your Postman API key has the right permissions" });
+      if (!r.ok) throw new ATPError(`Postman returned ${r.status}`, ErrorType.EXTERNAL, { hint:"Check your API key permissions" });
       const { collection } = await r.json();
       spec = parsePostmanCollection(collection);
       if (baseUrl) spec.baseUrl = baseUrl;
     } else if (intg.type === "swagger") {
       const url = intg.config.specUrl || intg.config.url;
-      if (!url) throw new ATPError("No spec URL configured for this Swagger integration", ErrorType.CONFIG,
-        { hint: "Edit the integration and add a spec URL" });
+      if (!url) throw new ATPError("No spec URL in this integration", ErrorType.CONFIG);
       spec = await parseSwaggerUrl(url);
       if (baseUrl) spec.baseUrl = baseUrl;
     } else {
-      throw new ATPError(`Integration type "${intg.type}" is not supported for API Agent`, ErrorType.VALIDATION,
-        { hint: "Connect a Postman or Swagger integration in 🔗 Context → Integrations" });
+      throw new ATPError(`Integration type "${intg.type}" not supported here`, ErrorType.VALIDATION,
+        { hint:"Use a Postman or Swagger integration" });
     }
   } else if (swaggerUrl) {
     spec = await parseSwaggerUrl(swaggerUrl);
@@ -71,11 +68,10 @@ async function importSpecRoute(req, res) {
       spec = parsePostmanCollection(parsed.collection || parsed);
       if (baseUrl) spec.baseUrl = baseUrl;
     } catch {
-      throw new ATPError("Invalid Postman JSON — could not parse", ErrorType.PARSE,
-        { hint: "Paste the full collection JSON exported from Postman" });
+      throw new ATPError("Invalid Postman JSON", ErrorType.PARSE, { hint:"Paste the full collection JSON" });
     }
   } else {
-    throw new ATPError("Provide an integrationId, swaggerUrl, or postmanJson", ErrorType.VALIDATION);
+    throw new ATPError("Provide integrationId, swaggerUrl, or postmanJson", ErrorType.VALIDATION);
   }
 
   res.json({ ok:true, spec });
@@ -84,7 +80,7 @@ async function importSpecRoute(req, res) {
 // ── Build scenarios — SSE ─────────────────────────────────────────────────────
 async function buildScenariosRoute(req, res) {
   const { spec, url, mode="quick", credentials, integrationId, collectionId } = req.body;
-  if (!spec) throw new ATPError("spec is required", ErrorType.VALIDATION);
+  if (!spec) throw new ATPError("spec required", ErrorType.VALIDATION);
 
   res.setHeader("Content-Type","text/event-stream");
   res.setHeader("Cache-Control","no-cache");
@@ -95,13 +91,11 @@ async function buildScenariosRoute(req, res) {
   try {
     const targetUrl = url || spec.baseUrl || "";
     send({ type:"log", msg:"◈ Gathering context from all integrations...", level:"ai" });
-
     const contextParts = [];
     if (targetUrl) {
       const urlCtx = await getContextSummary(targetUrl).catch(()=>"");
       if (urlCtx) { contextParts.push(urlCtx); send({ type:"log", msg:"✓ Integration context injected", level:"success" }); }
     }
-
     const jira       = integrationStore.getByType("jira");
     const confluence = integrationStore.getByType("confluence");
     const notion     = integrationStore.getByType("notion");
@@ -118,22 +112,18 @@ async function buildScenariosRoute(req, res) {
     console.log(`[agent/build] Generated ${scenarios.length} scenario(s) for ${spec.title}`);
 
     if (scenarios.length === 0) {
-      send({ type:"log", msg:"✗ Claude returned 0 scenarios — likely a JSON parse error. Check backend terminal.", level:"error" });
-      send({ type:"log", msg:"  Try again — this sometimes happens with very large specs (91 endpoints).", level:"warn" });
-      send({ type:"log", msg:"  Consider using 'Deep' mode which uses a higher token limit.", level:"info" });
-      send({ type:"error", msg:"No scenarios generated — Claude response could not be parsed" });
-      res.end();
-      return;
+      send({ type:"log", msg:"✗ 0 scenarios generated — JSON parse failed. Check backend terminal.", level:"error" });
+      send({ type:"error", msg:"No scenarios generated" });
+      res.end(); return;
     }
 
     send({ type:"log", msg:`✓ Generated ${scenarios.length} scenario(s)`, level:"success" });
 
     const suite = scenarioStore.saveSuite({
-      name:         `${spec.title} — ${mode==="deep"?"Deep":"Quick"} (${new Date().toLocaleDateString()})`,
-      specTitle:    spec.title, specSource:spec.source, baseUrl:spec.baseUrl,
-      mode, scenarios,
-      spec: { title:spec.title, baseUrl:spec.baseUrl, source:spec.source, endpoints:spec.endpoints?.slice(0,100) },
-      integrationId: integrationId||null, collectionId: collectionId||null,
+      name:`${spec.title} — ${mode==="deep"?"Deep":"Quick"} (${new Date().toLocaleDateString()})`,
+      specTitle:spec.title, specSource:spec.source, baseUrl:spec.baseUrl, mode, scenarios,
+      spec:{ title:spec.title, baseUrl:spec.baseUrl, source:spec.source, endpoints:spec.endpoints?.slice(0,100) },
+      integrationId:integrationId||null, collectionId:collectionId||null,
     });
 
     send({ type:"log", msg:"✓ Suite saved", level:"success" });
@@ -145,13 +135,11 @@ async function buildScenariosRoute(req, res) {
 }
 
 // ── Suite CRUD ────────────────────────────────────────────────────────────────
-async function listSuitesRoute(req, res) {
-  res.json({ ok:true, suites:scenarioStore.listSuites() });
-}
+async function listSuitesRoute(req, res) { res.json({ ok:true, suites:scenarioStore.listSuites() }); }
 
 async function getSuiteRoute(req, res) {
   const suite = scenarioStore.getSuite(req.params.id);
-  if (!suite) throw new ATPError("Suite not found", ErrorType.NOT_FOUND, { context:{ id:req.params.id } });
+  if (!suite) throw new ATPError("Suite not found", ErrorType.NOT_FOUND);
   res.json({ ok:true, suite });
 }
 
@@ -164,121 +152,126 @@ async function exportSuiteRoute(req, res) {
   const { format="json" } = req.query;
   const suite = scenarioStore.getSuite(req.params.id);
   if (!suite) throw new ATPError("Suite not found", ErrorType.NOT_FOUND);
-
   const { scenarios, spec } = suite;
   const safe = (suite.specTitle||"atp").replace(/[^a-z0-9]/gi,"-").toLowerCase();
-
   if (format === "postman") {
-    const col = scenariosToPostmanCollection(scenarios, spec);
-    res.setHeader("Content-Disposition", `attachment; filename="${safe}.postman_collection.json"`);
-    return res.json(col);
+    res.setHeader("Content-Disposition",`attachment; filename="${safe}.postman_collection.json"`);
+    return res.json(scenariosToPostmanCollection(scenarios, spec));
   }
   if (format === "jest") {
-    const code = scenariosToJestFile(scenarios, spec);
-    res.setHeader("Content-Disposition", `attachment; filename="${safe}.test.js"`);
+    res.setHeader("Content-Disposition",`attachment; filename="${safe}.test.js"`);
     res.setHeader("Content-Type","text/plain");
-    return res.send(code);
+    return res.send(scenariosToJestFile(scenarios, spec));
   }
-  res.setHeader("Content-Disposition", `attachment; filename="${safe}-scenarios.json"`);
+  res.setHeader("Content-Disposition",`attachment; filename="${safe}-scenarios.json"`);
   res.json({ suite:suite.name, specTitle:suite.specTitle, baseUrl:suite.baseUrl, scenarios });
 }
 
-// ── Run one scenario — SSE ────────────────────────────────────────────────────
-async function runScenarioRoute(req, res) {
+// ── START a run (background — survives navigation) ────────────────────────────
+async function startRunRoute(req, res) {
   const { scenario, spec, credentials, suiteId } = req.body;
-  if (!scenario) throw new ATPError("scenario is required", ErrorType.VALIDATION);
+  if (!scenario) throw new ATPError("scenario required", ErrorType.VALIDATION);
 
-  res.setHeader("Content-Type","text/event-stream");
-  res.setHeader("Cache-Control","no-cache");
-  res.setHeader("Connection","keep-alive");
-  res.setHeader("Access-Control-Allow-Origin","*");
-  const send = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
-
-  try {
-    const result = await runScenario(scenario, spec?.baseUrl||"", credentials||{}, evt => {
-      if (evt.type==="step_start")   send({ type:"log", msg:`▶ [${evt.stepIndex+1}/${evt.totalSteps}] ${evt.method} — ${evt.name}${evt.neededVars?.length?` (needs: ${evt.neededVars.map(v=>`{{${v}}}`).join(", ")})`:""} `, level:"system" });
-      if (evt.type==="step_done")    send({ type:"step", description:evt.name, status:evt.status, statusCode:evt.statusCode, duration:evt.duration, url:evt.url });
-      if (evt.type==="step_error")   send({ type:"log", msg:`  ✗ ${evt.name}: ${evt.error}`, level:"error" });
-      if (evt.type==="capture")      send({ type:"log", msg:`  ↳ captured {{${evt.varName}}} = ${evt.value}`, level:"ai" });
-      if (evt.type==="capture_miss") send({ type:"log", msg:`  ⚠ ${evt.note}`, level:"warn" });
-      if (evt.type==="log")          send({ type:"log", msg:evt.msg, level:evt.level||"info" });
-    });
-    if (suiteId) scenarioStore.updateSuiteResults(suiteId, scenario.id, result);
-    const saved = resultsStore.save({
-      type:"api", name:scenario.name, url:spec?.baseUrl||"",
-      status:result.status, passed:result.passed||0, failed:result.failed||0,
-      total:result.steps?.length||0, duration:result.duration||0,
-      steps:result.steps||[], assertions:[],
-      startedAt:new Date().toISOString(), completedAt:new Date().toISOString(),
-    });
-    send({ type:"done", result, runId:saved.id });
-  } catch (err) {
-    sendSSEError(res, err, { route:"agent/run", scenario:scenario?.name });
-  }
-  res.end();
-}
-
-// ── Run all — SSE ─────────────────────────────────────────────────────────────
-async function runAllScenariosRoute(req, res) {
-  const { scenarios, spec, credentials, filter="all", suiteId } = req.body;
-  if (!scenarios?.length) throw new ATPError("scenarios array is required", ErrorType.VALIDATION);
-
-  let toRun = scenarios;
-  if (filter !== "all") toRun = toRun.filter(s =>
-    s.priority?.toLowerCase()===filter || s.category?.toLowerCase().includes(filter)
-  );
-
-  res.setHeader("Content-Type","text/event-stream");
-  res.setHeader("Cache-Control","no-cache");
-  res.setHeader("Connection","keep-alive");
-  res.setHeader("Access-Control-Allow-Origin","*");
-  const send = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
-  const all  = [];
-
-  for (let i=0; i<toRun.length; i++) {
-    const sc = toRun[i];
-    send({ type:"scenario_start", index:i, total:toRun.length, name:sc.name });
-    try {
-      const result = await runScenario(sc, spec?.baseUrl||"", credentials||{}, evt => {
-        if (evt.type==="step_start")   send({ type:"log", msg:`  ▶ [${evt.stepIndex+1}/${evt.totalSteps}] ${evt.method} — ${evt.name}`, level:"system" });
-        if (evt.type==="step_done")    send({ type:"log", msg:`  ${evt.status==="pass"?"✓":"✗"} ${evt.name} (${evt.statusCode}, ${evt.duration}ms)`, level:evt.status==="pass"?"success":"error" });
-        if (evt.type==="step_error")   send({ type:"log", msg:`  ✗ ${evt.name}: ${evt.error}`, level:"error" });
-        if (evt.type==="capture")      send({ type:"log", msg:`    ↳ {{${evt.varName}}} = ${evt.value}`, level:"ai" });
-        if (evt.type==="capture_miss") send({ type:"log", msg:`    ⚠ ${evt.note}`, level:"warn" });
-        if (evt.type==="log")          send({ type:"log", msg:evt.msg, level:evt.level||"info" });
-      });
-      if (suiteId) scenarioStore.updateSuiteResults(suiteId, sc.id, result);
-      all.push({ ...result, name:sc.name });
-      send({ type:"scenario_done", index:i, status:result.status, passed:result.passed||0, failed:result.failed||0 });
-    } catch (err) {
-      const classified = err instanceof ATPError ? err : new ATPError(err.message, ErrorType.INTERNAL);
-      all.push({ name:sc.name, status:"error", error:classified.message, hint:classified.hint });
-      send({ type:"scenario_done", index:i, status:"error", error:classified.message });
-    }
-  }
-
-  const passed = all.filter(r=>r.status==="pass").length;
-  resultsStore.save({
-    type:"api-suite", name:`${spec?.title||"API"} Suite — ${toRun.length} scenarios`,
-    url:spec?.baseUrl||"", status:all.length-passed===0?"pass":"fail",
-    passed, failed:all.length-passed, total:toRun.length,
-    steps:all.map(r=>({ description:r.name, status:r.status })), assertions:[],
-    startedAt:new Date().toISOString(), completedAt:new Date().toISOString(),
+  const run = runStore.create({
+    suiteId, scenarioId:scenario.id,
+    scenarioName:scenario.name,
+    specBaseUrl:spec?.baseUrl||"",
+    mode:"single",
   });
 
-  send({ type:"suite_done", passed, failed:all.length-passed, total:toRun.length });
-  res.end();
+  // Start in background — returns immediately
+  startRun(run.id, { scenario:{ ...scenario, _suiteId:suiteId }, spec, credentials });
+
+  res.json({ ok:true, runId:run.id });
 }
 
-// ── Register ──────────────────────────────────────────────────────────────────
+// ── START a suite run (background) ───────────────────────────────────────────
+async function startSuiteRunRoute(req, res) {
+  const { scenarios, spec, credentials, filter="all", suiteId } = req.body;
+  if (!scenarios?.length) throw new ATPError("scenarios required", ErrorType.VALIDATION);
+
+  const run = runStore.create({
+    suiteId, scenarioId:null,
+    scenarioName:`Suite (${scenarios.length} scenarios)`,
+    specBaseUrl:spec?.baseUrl||"",
+    mode:"suite",
+  });
+
+  startSuiteRun(run.id, { scenarios, spec, credentials, filter, suiteId });
+
+  res.json({ ok:true, runId:run.id });
+}
+
+// ── SSE: subscribe to a run's live updates ────────────────────────────────────
+async function subscribeRunRoute(req, res) {
+  const { id } = req.params;
+  const run = runStore.get(id);
+  if (!run) return res.status(404).json({ error:"Run not found" });
+
+  res.setHeader("Content-Type","text/event-stream");
+  res.setHeader("Cache-Control","no-cache");
+  res.setHeader("Connection","keep-alive");
+  res.setHeader("Access-Control-Allow-Origin","*");
+
+  const unsubscribe = subscribe(id, res);
+
+  // If run is already done, send final state and close
+  if (["done","failed","cancelled"].includes(run.status)) {
+    res.write(`data: ${JSON.stringify({ type:"snapshot", run })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type:"done", run })}\n\n`);
+    res.end();
+    return;
+  }
+
+  req.on("close", unsubscribe);
+}
+
+// ── GET run state ─────────────────────────────────────────────────────────────
+async function getRunRoute(req, res) {
+  const run = runStore.get(req.params.id);
+  if (!run) return res.status(404).json({ error:"Run not found" });
+  res.json({ ok:true, run });
+}
+
+// ── List all runs ─────────────────────────────────────────────────────────────
+async function listRunsRoute(req, res) {
+  const { suiteId } = req.query;
+  let runs = runStore.list();
+  if (suiteId) runs = runs.filter(r => r.suiteId === suiteId);
+  res.json({ ok:true, runs });
+}
+
+// ── Cancel a run ──────────────────────────────────────────────────────────────
+async function cancelRunRoute(req, res) {
+  const run = runStore.get(req.params.id);
+  if (!run) return res.status(404).json({ error:"Run not found" });
+  runStore.cancel(req.params.id);
+  res.json({ ok:true });
+}
+
+// ── Delete a run ──────────────────────────────────────────────────────────────
+async function deleteRunRoute(req, res) {
+  runStore.delete(req.params.id);
+  res.json({ ok:true });
+}
+
+// ── Register all routes ───────────────────────────────────────────────────────
 export function apiAgentRoutes(app) {
-  app.get   ("/api/agent/sources",         handle("agent/sources",   listApiSourcesRoute));
-  app.post  ("/api/agent/import",          handle("agent/import",    importSpecRoute));
-  app.post  ("/api/agent/build",           handle("agent/build",     buildScenariosRoute));
-  app.get   ("/api/agent/suites",          handle("agent/suites",    listSuitesRoute));
-  app.get   ("/api/agent/suites/:id",      handle("agent/suites/:id",getSuiteRoute));
-  app.delete("/api/agent/suites/:id",      handle("agent/suites/:id",deleteSuiteRoute));
-  app.get   ("/api/agent/suites/:id/export", handle("agent/export",  exportSuiteRoute));
-  app.post  ("/api/agent/run",             handle("agent/run",       runScenarioRoute));
-  app.post  ("/api/agent/run-all",         handle("agent/run-all",   runAllScenariosRoute));
+  // Spec & suites
+  app.get   ("/api/agent/sources",           handle("agent/sources",   listApiSourcesRoute));
+  app.post  ("/api/agent/import",            handle("agent/import",    importSpecRoute));
+  app.post  ("/api/agent/build",             handle("agent/build",     buildScenariosRoute));
+  app.get   ("/api/agent/suites",            handle("agent/suites",    listSuitesRoute));
+  app.get   ("/api/agent/suites/:id",        handle("agent/suites/:id",getSuiteRoute));
+  app.delete("/api/agent/suites/:id",        handle("agent/suites/:id",deleteSuiteRoute));
+  app.get   ("/api/agent/suites/:id/export", handle("agent/export",    exportSuiteRoute));
+
+  // Runs — background execution
+  app.post  ("/api/agent/runs",              handle("agent/runs/start", startRunRoute));
+  app.post  ("/api/agent/runs/suite",        handle("agent/runs/suite", startSuiteRunRoute));
+  app.get   ("/api/agent/runs",              handle("agent/runs/list",  listRunsRoute));
+  app.get   ("/api/agent/runs/:id",          handle("agent/runs/:id",   getRunRoute));
+  app.get   ("/api/agent/runs/:id/stream",   subscribeRunRoute);  // SSE — no handle() wrapper
+  app.post  ("/api/agent/runs/:id/cancel",   handle("agent/runs/cancel",cancelRunRoute));
+  app.delete("/api/agent/runs/:id",          handle("agent/runs/delete",deleteRunRoute));
 }

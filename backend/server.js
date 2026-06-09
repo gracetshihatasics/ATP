@@ -24,6 +24,7 @@ import { scheduleRoutes }                     from "./src/scheduler/scheduleRout
 import { startScheduler }                     from "./src/scheduler/scheduleRunner.js";
 import { integrationStore }                   from "./src/integrations/integrationStore.js";
 import { formatError, logError }              from "./src/utils/errors.js";
+import { recoverInterruptedRuns }             from "./src/api/runExecutor.js";
 
 // ── App ───────────────────────────────────────────────────────────────────────
 const app = express();
@@ -89,6 +90,7 @@ startScheduler();
 // ── Startup log ───────────────────────────────────────────────────────────────
 setTimeout(() => {
   console.log(`[ATP] Integrations stored: ${integrationStore.count()}`);
+  recoverInterruptedRuns();
 }, 500);
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────

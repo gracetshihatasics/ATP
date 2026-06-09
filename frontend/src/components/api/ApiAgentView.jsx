@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { METHOD_COLORS }         from "../../constants/theme.js";
 import { ScenarioDetailPanel }   from "./ScenarioDetailPanel.jsx";
 import { RunConfigPanel }        from "./RunConfigPanel.jsx";
+import { SneakerLoader }         from "../shared/SneakerLoader.jsx";
+import { RunsPanel }             from "./RunsPanel.jsx";
 const BACKEND = "http://localhost:3579";
 
 const STATUS_C = {
@@ -187,77 +189,43 @@ export function ApiAgentView() {
   };
 
   // ── Run one scenario ──────────────────────────────────────────────────────
+  // ── Run one scenario (background — survives navigation) ──────────────────
   const runOne = async (scenario) => {
-    setSelected(scenario);
-    setPhase("running");
-    setRunResults(p => ({ ...p, [scenario.id]: { status:"running" } }));
-    addLog(`▶ Running: ${scenario.name}`, "system");
-
     const credentials = runConfig.credentials || {};
-
-    const res     = await fetch(`${BACKEND}/api/agent/run`, {
+    const res = await fetch(`${BACKEND}/api/agent/runs`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ scenario, spec: { ...spec, baseUrl: runConfig.baseUrl || spec?.baseUrl }, credentials, suiteId }),
+      body: JSON.stringify({
+        scenario, suiteId,
+        spec: { ...spec, baseUrl: runConfig.baseUrl || spec?.baseUrl },
+        credentials,
+      }),
     });
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let   buf = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream:true });
-      const lines = buf.split("\n"); buf = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          const evt = JSON.parse(line.slice(6));
-          if (evt.type === "log")  addLog(evt.msg, evt.level);
-          if (evt.type === "step") addLog(`  ${evt.status==="pass"?"✓":"✗"} ${evt.description}`, evt.status==="pass"?"success":"error");
-          if (evt.type === "done") {
-            setRunResults(p => ({ ...p, [scenario.id]: evt.result }));
-            setPhase("done");
-          }
-        } catch {}
-      }
+    const data = await res.json();
+    if (data.ok) {
+      addLog(`▶ Run started: ${scenario.name} (ID: ${data.runId})`, "system");
+      addLog("  Navigate away freely — run continues in background", "ai");
+      setActiveTab("runs");
     }
   };
 
-  // ── Run all ───────────────────────────────────────────────────────────────
+  // ── Run all scenarios (background) ────────────────────────────────────────
   const runAll = async () => {
-    setPhase("running"); setSuiteResult(null);
+    const credentials = runConfig.credentials || {};
     let toRun = scenarios;
     if (filter !== "all") toRun = toRun.filter(s => s.priority?.toLowerCase() === filter);
-    addLog(`▶ Running ${toRun.length} scenario(s) [${filter}]...`, "system");
-
-    const credentials = runConfig.credentials || {};
-
-    const res     = await fetch(`${BACKEND}/api/agent/run-all`, {
+    const res = await fetch(`${BACKEND}/api/agent/runs/suite`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ scenarios:toRun, spec: { ...spec, baseUrl: runConfig.baseUrl || spec?.baseUrl }, credentials, filter, suiteId }),
+      body: JSON.stringify({
+        scenarios:toRun, suiteId, filter,
+        spec: { ...spec, baseUrl: runConfig.baseUrl || spec?.baseUrl },
+        credentials,
+      }),
     });
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let   buf = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream:true });
-      const lines = buf.split("\n"); buf = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          const evt = JSON.parse(line.slice(6));
-          if (evt.type === "log")            addLog(evt.msg, evt.level);
-          if (evt.type === "scenario_start") addLog(`▶ [${evt.index+1}/${evt.total}] ${evt.name}`, "system");
-          if (evt.type === "scenario_done")  {
-            setRunResults(p => ({ ...p, [scenarios[evt.index]?.id]: { status:evt.status, passed:evt.passed, failed:evt.failed } }));
-            addLog(`  ${evt.status==="pass"?"✓":"✗"}`, evt.status==="pass"?"success":"error");
-          }
-          if (evt.type === "suite_done") { setSuiteResult(evt); setPhase("done"); }
-        } catch {}
-      }
+    const data = await res.json();
+    if (data.ok) {
+      addLog(`▶ Suite run started: ${toRun.length} scenario(s) (ID: ${data.runId})`, "system");
+      addLog("  Navigate away freely — run continues in background", "ai");
+      setActiveTab("runs");
     }
   };
 
@@ -554,19 +522,32 @@ export function ApiAgentView() {
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
         {/* Sub-tabs */}
-        {ready && (
-          <div style={{ background:"#090d11", borderBottom:"0.5px solid #1e3a5f", padding:"0 14px", display:"flex", alignItems:"stretch", height:36, flexShrink:0 }}>
-            {[["scenarios",`Scenarios (${visibleScenarios.length}${filter!=="all"?"/"+scenarios.length:""})`],["results",`Results (${Object.keys(runResults).length})`]].map(([t,l]) => (
-              <button key={t} onClick={() => setActiveTab(t)}
-                style={{ background:"none", border:"none", borderBottom:activeTab===t?"2px solid #4d9de0":"2px solid transparent", color:activeTab===t?"#7ec8ff":"#4a7fa5", cursor:"pointer", fontSize:10, padding:"0 14px", fontFamily:"inherit", fontWeight:activeTab===t?600:400 }}>
-                {l}
-              </button>
-            ))}
-            {spec && <div style={{ marginLeft:"auto", fontSize:9, color:"#2d6aad", alignSelf:"center" }}>{spec.baseUrl}</div>}
-          </div>
-        )}
+        <div style={{ background:"#090d11", borderBottom:"0.5px solid #1e3a5f", padding:"0 14px", display:"flex", alignItems:"stretch", height:36, flexShrink:0 }}>
+          {[
+            ["scenarios", `Scenarios${ready ? ` (${visibleScenarios.length}${filter!=="all"?"/"+scenarios.length:""})` : ""}`],
+            ["results",   `Results (${Object.keys(runResults).length})`],
+            ["runs",      "Runs ▶"],
+          ].map(([t,l]) => (
+            <button key={t} onClick={() => setActiveTab(t)}
+              style={{ background:"none", border:"none", borderBottom:activeTab===t?"2px solid #4d9de0":"2px solid transparent", color:activeTab===t?"#7ec8ff":"#4a7fa5", cursor:"pointer", fontSize:10, padding:"0 14px", fontFamily:"inherit", fontWeight:activeTab===t?600:400 }}>
+              {l}
+            </button>
+          ))}
+          {spec && <div style={{ marginLeft:"auto", fontSize:9, color:"#2d6aad", alignSelf:"center" }}>{spec.baseUrl}</div>}
+        </div>
 
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+          {/* Building loader */}
+          {(phase === "building" || phase === "importing") && (
+            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <SneakerLoader
+                mode={mode}
+                phase={phase}
+                message={phase === "importing" ? "Lacing up the spec..." : undefined}
+              />
+            </div>
+          )}
+
           {/* Empty state */}
           {!ready && phase === "idle" && (
             <div style={{ textAlign:"center", marginTop:80 }}>
@@ -674,6 +655,14 @@ export function ApiAgentView() {
                 );
               })}
             </div>
+          )}
+
+          {/* Runs tab — background runs, persist across navigation */}
+          {activeTab === "runs" && (
+            <RunsPanel
+              suiteId={suiteId}
+              onRunComplete={() => {}}
+            />
           )}
         </div>
       </div>

@@ -9,6 +9,7 @@ import { AdvancedDiscoveryPanel }      from "./AdvancedDiscoveryPanel.jsx";
 import { CodeIntelligencePanel }       from "../intelligence/CodeIntelligencePanel.jsx";
 import { ExportProjectModal }          from "../testbed/ExportProjectModal.jsx";
 import { useAdvancedDiscovery }        from "../../hooks/useAdvancedDiscovery.js";
+import { SneakerLoader }               from "../shared/SneakerLoader.jsx";
 
 export function DiscoveryView({ disc, onLaunchRun, onPhaseChange }) {
   const {
@@ -97,6 +98,10 @@ export function DiscoveryView({ disc, onLaunchRun, onPhaseChange }) {
               {activeTab === "code" ? (
                 <div style={{ flex:1, overflow:"hidden" }}>
                   <CodeIntelligencePanel url={url} navLinks={[]} />
+                </div>
+              ) : phase === "discovering" ? (
+                <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <SneakerLoader mode="quick" message="Scanning the app surface..." />
                 </div>
               ) : (
                 <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
