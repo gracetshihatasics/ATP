@@ -4,6 +4,7 @@ import { surfaceScan } from "./surfaceScanner.js";
 import { resolveAuth } from "./authResolver.js";
 import { mapFeatures } from "./featureMapper.js";
 import { getContextSummary } from "../integrations/contextBuilder.js";
+import { evalUseCase } from "../eval/useCaseEval.js";
 
 const client = new Anthropic({ apiKey: config.apiKey });
 
@@ -100,6 +101,19 @@ export async function runAdvancedDiscovery(url, credentialId, onEvent = () => {}
 
     onEvent({ type: "phase_update", phase: 4, total: 4, label: "Generating use cases", status: "done",
       summary: `${plan.useCases.length} use cases across ${plan.featureAreas?.length ?? featureAreas.length} features` });
+
+    // ── Discovery eval gate: score each use case for text quality ─────────────
+    onEvent({ type: "log", msg: "◈ Evaluating use case quality...", level: "ai" });
+    for (const uc of plan.useCases ?? []) {
+      try {
+        const ev = await evalUseCase(uc, integrationContext);
+        uc.evalScore       = ev.score;
+        uc.evalIssues      = ev.issues;
+        uc.evalSuggestions = ev.suggestions;
+        uc.prodReady       = ev.prodReady;
+        onEvent({ type: "eval_score", ucId: uc.id, score: ev.score, prodReady: ev.prodReady, issues: ev.issues, suggestions: ev.suggestions });
+      } catch {}
+    }
 
     const duration = Math.round((Date.now() - startTime) / 1000);
     onEvent({ type: "discovery_complete", duration, plan });

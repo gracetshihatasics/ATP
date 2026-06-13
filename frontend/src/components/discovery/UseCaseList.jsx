@@ -29,6 +29,17 @@ export function UseCaseList({ useCases, selectedId, savedSuite, filterPriority, 
                 </div>
                 <div style={{ display:"flex", gap:4, alignItems:"center" }}>
                   <span className="pill" style={{ background:pc.bg, border:`0.5px solid ${pc.border}`, color:pc.text }}>{uc.priority}</span>
+                  {uc.evalScore !== undefined && (
+                    <span style={{
+                      fontSize:8, padding:"1px 5px", borderRadius:3,
+                      color:      uc.evalScore >= 85 ? "#4caf50" : uc.evalScore >= 70 ? "#f0c040" : "#ff3b3b",
+                      background: uc.evalScore >= 85 ? "#0a2010" : uc.evalScore >= 70 ? "#1a1500" : "#1a0808",
+                      border:     `0.5px solid ${uc.evalScore >= 85 ? "#4caf5060" : uc.evalScore >= 70 ? "#f0c04060" : "#ff3b3b60"}`,
+                    }}>{uc.evalScore}</span>
+                  )}
+                  {uc.prodReady && (
+                    <span style={{ fontSize:8, padding:"1px 5px", borderRadius:3, color:"#4caf50", background:"#0a2010", border:"0.5px solid #4caf5060" }}>✓ Prod</span>
+                  )}
                   <button
                     onClick={e => { e.stopPropagation(); onToggleSuite(uc.id); }}
                     style={{ background:saved?"#0a2510":"none", border:`0.5px solid ${saved?"#4caf50":"#1e3a5f"}`, borderRadius:4, color:saved?"#7ec87f":"#4a7fa5", cursor:"pointer", fontSize:9, padding:"2px 6px", fontFamily:"inherit", transition:"all 0.1s" }}>
@@ -39,6 +50,19 @@ export function UseCaseList({ useCases, selectedId, savedSuite, filterPriority, 
               </div>
               <div style={{ fontSize:11, fontWeight:500, color:"#b0c8e0", marginBottom:3, lineHeight:1.4 }}>{uc.title}</div>
               <div style={{ fontSize:10, color:"#4a7fa5", lineHeight:1.5 }}>{uc.description}</div>
+              {uc.evalIssues?.length > 0 && (
+                <details style={{ marginTop:4 }}>
+                  <summary style={{ fontSize:9, color:"#4a7fa5", cursor:"pointer", userSelect:"none" }}>
+                    {uc.evalIssues.length} quality issue{uc.evalIssues.length > 1 ? "s" : ""}
+                  </summary>
+                  {uc.evalIssues.map((issue, i) => (
+                    <div key={i} style={{ fontSize:9, color:"#ff8888", paddingLeft:8, lineHeight:1.6 }}>⚠ {issue}</div>
+                  ))}
+                  {uc.evalSuggestions?.map((s, i) => (
+                    <div key={i} style={{ fontSize:9, color:"#4d9de0", paddingLeft:8, lineHeight:1.6 }}>◈ {s}</div>
+                  ))}
+                </details>
+              )}
             </div>
           );
         })}

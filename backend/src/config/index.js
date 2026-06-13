@@ -22,4 +22,8 @@ export const config = {
     quality: 60,
     fullPage: false,
   },
+  eval: {
+    confidenceThreshold: 70,
+    prodReadyThreshold:  85,
+  },
 };

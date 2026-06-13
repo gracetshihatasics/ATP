@@ -1,4 +1,4 @@
-export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgress, assertions, onStopRun, onBack }) {
+export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgress, assertions, evalState, onStopRun, onBack }) {
 
   const statusConfig = {
     "pass":          { color:"#4caf50", icon:"✓", label:"passed" },
@@ -8,6 +8,7 @@ export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgr
     "running":       { color:"#ffaa44", icon:"●", label:"running" },
     "pending":       { color:"#2d6aad", icon:"○", label:"pending" },
     "error":         { color:"#ff8c00", icon:"⚠", label:"error" },
+    "blocked":       { color:"#ff6b00", icon:"⛔", label:"blocked" },
   };
 
   const getStatus = (step) => {
@@ -15,10 +16,15 @@ export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgr
     return statusConfig[step.status] || statusConfig.pending;
   };
 
+  const scoreColor = (s) => s >= 85 ? "#4caf50" : s >= 70 ? "#f0c040" : "#ff3b3b";
+  const scoreBg    = (s) => s >= 85 ? "#0a2010" : s >= 70 ? "#1a1500" : "#1a0808";
+  const scoreBdr   = (s) => s >= 85 ? "#4caf5060" : s >= 70 ? "#f0c04060" : "#ff3b3b60";
+
   const passed    = steps.filter(s => s.status === "pass" || s.status === "pass-deferred").length;
   const failed    = steps.filter(s => s.status === "fail").length;
   const recovered = steps.filter(s => s.status === "recovered").length;
   const uncertain = steps.filter(s => s.uncertain).length;
+  const blocked   = steps.filter(s => s.status === "blocked").length;
 
   return (
     <div style={{ width:280, flexShrink:0, borderRight:"0.5px solid #1e3a5f", display:"flex", flexDirection:"column", background:"#090d11" }}>
@@ -48,13 +54,54 @@ export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgr
         {/* Step summary when running */}
         {steps.length > 0 && (
           <div style={{ display:"flex", gap:6, marginTop:8, flexWrap:"wrap" }}>
-            {passed > 0    && <Badge label={`${passed} pass`}     color="#4caf50" />}
-            {failed > 0    && <Badge label={`${failed} fail`}     color="#ff3b3b" />}
-            {recovered > 0 && <Badge label={`${recovered} recovered`} color="#f0c040" />}
-            {uncertain > 0 && <Badge label={`${uncertain} uncertain`} color="#4d9de0" />}
+            {passed > 0    && <Badge label={`${passed} pass`}            color="#4caf50" />}
+            {failed > 0    && <Badge label={`${failed} fail`}            color="#ff3b3b" />}
+            {recovered > 0 && <Badge label={`${recovered} recovered`}    color="#f0c040" />}
+            {uncertain > 0 && <Badge label={`${uncertain} uncertain`}    color="#4d9de0" />}
+            {blocked > 0   && <Badge label={`${blocked} blocked`}        color="#ff6b00" />}
           </div>
         )}
       </div>
+
+      {/* Pre-run eval panel */}
+      {evalState && (
+        <div style={{ padding:"8px 12px", borderBottom:"0.5px solid #1e3a5f", background:"#05080d" }}>
+          <div style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:5 }}>
+            {evalState.active ? "◈ Pre-run Eval" : "◈ Eval Complete"}
+          </div>
+          {evalState.active && (
+            <div style={{ height:2, background:"#1e3a5f", borderRadius:1, marginBottom:5 }}>
+              <div style={{
+                height:"100%", background:"#2d6aad", borderRadius:1, transition:"width 0.3s",
+                width: evalState.stepCount > 0 ? `${(evalState.progress.length / evalState.stepCount) * 100}%` : "0%",
+              }} />
+            </div>
+          )}
+          {evalState.result && (
+            <div style={{ fontSize:9, display:"flex", gap:4, flexWrap:"wrap" }}>
+              <span style={{ color: scoreColor(evalState.result.score) }}>Score: {evalState.result.score}</span>
+              {evalState.result.prodReady && <span style={{ color:"#4caf50" }}>✓ Prod Ready</span>}
+              {evalState.result.fixedCount > 0 && <span style={{ color:"#4d9de0" }}>⚡ {evalState.result.fixedCount} fixed</span>}
+              {evalState.result.blockedCount > 0 && <span style={{ color:"#ff6b00" }}>⛔ {evalState.result.blockedCount} blocked</span>}
+            </div>
+          )}
+          {/* Scrollable per-step eval rows */}
+          {evalState.progress.length > 0 && (
+            <div style={{ maxHeight:60, overflowY:"auto", marginTop:4 }}>
+              {evalState.progress.map((p, i) => (
+                <div key={i} style={{ display:"flex", gap:4, alignItems:"center", fontSize:8, padding:"1px 0", color:"#4a7fa5" }}>
+                  <span style={{ color:scoreColor(p.score), background:scoreBg(p.score), border:`0.5px solid ${scoreBdr(p.score)}`, borderRadius:2, padding:"0 3px", flexShrink:0 }}>
+                    {p.score}
+                  </span>
+                  {p.fixed && <span style={{ color:"#4d9de0", flexShrink:0 }}>⚡</span>}
+                  {p.blocked && <span style={{ color:"#ff6b00", flexShrink:0 }}>⛔</span>}
+                  <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.selector}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Step count header */}
       <div style={{ fontSize:9, color:"#2d6aad", letterSpacing:"0.1em", padding:"5px 12px", borderBottom:"0.5px solid #1e3a5f", textTransform:"uppercase", display:"flex", justifyContent:"space-between" }}>
@@ -79,7 +126,7 @@ export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgr
           return (
             <div key={i} style={{
               padding:"6px 12px", borderBottom:"0.5px solid #0d1a2a", cursor:"pointer",
-              background: isActive ? "#0d1f30" : step.status === "fail" ? "#1a0808" : step.status === "recovered" ? "#1a1500" : step.status === "pass-deferred" ? "#0a1520" : "transparent",
+              background: isActive ? "#0d1f30" : step.status === "fail" ? "#1a0808" : step.status === "recovered" ? "#1a1500" : step.status === "pass-deferred" ? "#0a1520" : step.status === "blocked" ? "#180d00" : "transparent",
               transition:"background 0.15s",
             }}>
               {/* Step header */}
@@ -97,36 +144,54 @@ export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgr
                 </div>
 
                 {/* Description */}
-                <div style={{ flex:1, fontSize:10, color:isActive?"#e0f0ff":step.status==="fail"?"#ff8888":step.status==="recovered"?"#f0e060":step.status==="pass-deferred"?"#88d0ff":"#8ab4c8",
+                <div style={{ flex:1, fontSize:10, color:isActive?"#e0f0ff":step.status==="fail"?"#ff8888":step.status==="recovered"?"#f0e060":step.status==="pass-deferred"?"#88d0ff":step.status==="blocked"?"#ff9955":"#8ab4c8",
                   overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                   {step.description || `Step ${i+1}`}
                 </div>
 
                 {/* Right side indicators */}
                 <div style={{ display:"flex", gap:3, flexShrink:0 }}>
+                  {step.evalScore !== undefined && (
+                    <span style={{ fontSize:8, color:scoreColor(step.evalScore), background:scoreBg(step.evalScore), border:`0.5px solid ${scoreBdr(step.evalScore)}`, borderRadius:3, padding:"1px 4px" }}>
+                      {step.evalScore}
+                    </span>
+                  )}
+                  {step.fixed && (
+                    <span style={{ fontSize:8, color:"#4d9de0", background:"#0a1520", border:"0.5px solid #4d9de060", borderRadius:3, padding:"1px 4px" }}>⚡</span>
+                  )}
                   {step.attempts > 1 && (
                     <span style={{ fontSize:8, color:"#f0c040", background:"#1a1000", border:"0.5px solid #ff8c0060", borderRadius:3, padding:"1px 4px" }}>
                       {step.attempts}×
                     </span>
                   )}
                   {step.uncertain && (
-                    <span style={{ fontSize:8, color:"#4d9de0", background:"#0a1520", border:"0.5px solid #4d9de060", borderRadius:3, padding:"1px 4px" }}>
-                      ?
-                    </span>
+                    <span style={{ fontSize:8, color:"#4d9de0", background:"#0a1520", border:"0.5px solid #4d9de060", borderRadius:3, padding:"1px 4px" }}>?</span>
                   )}
                   {step.screenshot && <span style={{ fontSize:9, color:"#2d6aad" }}>📷</span>}
                 </div>
               </div>
 
-              {/* Error message */}
+              {/* Error or blocked message */}
+              {step.status === "blocked" && step.error && (
+                <div style={{ fontSize:9, color:"#ff9955", paddingLeft:23, lineHeight:1.5, marginTop:2 }}>
+                  ⛔ {step.error.slice(0, 80)}
+                </div>
+              )}
               {step.error && step.status === "fail" && (
                 <div style={{ fontSize:9, color:"#ff6b6b", paddingLeft:23, lineHeight:1.5, marginTop:2 }}>
                   ✗ {step.error.slice(0, 80)}
                 </div>
               )}
 
+              {/* Auto-fix note */}
+              {step.fixed && step.fixReason && (
+                <div style={{ fontSize:9, color:"#4d9de0", paddingLeft:23, lineHeight:1.5, marginTop:2 }}>
+                  ⚡ {step.fixReason.slice(0, 80)}
+                </div>
+              )}
+
               {/* Observation from AI vision */}
-              {step.observation && step.status !== "fail" && !step.error && (
+              {step.observation && step.status !== "fail" && step.status !== "blocked" && !step.error && (
                 <div style={{ fontSize:9, color:"#4a7fa5", paddingLeft:23, lineHeight:1.5, marginTop:2, fontStyle:"italic" }}>
                   {step.observation.slice(0, 80)}
                 </div>
@@ -199,6 +264,11 @@ export function StepsPanel({ steps, currentStep, runPhase, runTarget, suiteProgr
           {uncertain > 0 && (
             <div style={{ marginTop:5, background:"#0a1520", border:"0.5px solid #4d9de0", borderRadius:5, padding:"4px 8px", textAlign:"center", fontSize:9, color:"#4d9de0" }}>
               ◈ {uncertain} step(s) uncertain — ran but unconfirmed
+            </div>
+          )}
+          {blocked > 0 && (
+            <div style={{ marginTop:5, background:"#180d00", border:"0.5px solid #ff6b00", borderRadius:5, padding:"4px 8px", textAlign:"center", fontSize:9, color:"#ff6b00" }}>
+              ⛔ {blocked} step(s) blocked — selector unresolvable
             </div>
           )}
         </div>

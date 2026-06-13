@@ -8,7 +8,7 @@ export function RunnerView({ runner, onBack, onGoToResults, hideHeader }) {
     runPhase, steps, currentStep,
     screenshots, viewShot, setViewShot,
     assertions, suiteProgress, runTarget,
-    lastRunId, stopRun,
+    lastRunId, evalState, stopRun,
   } = runner;
 
   const height = hideHeader ? "100%" : "calc(100vh - 44px)";
@@ -20,6 +20,7 @@ export function RunnerView({ runner, onBack, onGoToResults, hideHeader }) {
           steps={steps} currentStep={currentStep}
           runPhase={runPhase} runTarget={runTarget}
           suiteProgress={suiteProgress} assertions={assertions}
+          evalState={evalState}
           onStopRun={stopRun} onBack={onBack}
         />
 

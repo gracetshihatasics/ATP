@@ -2,13 +2,15 @@ import { launchBrowser }      from "../browser/launcher.js";
 import { executeAction }      from "../browser/executor.js";
 import { runAssertions }      from "../browser/assertions.js";
 import { captureScreenshot }  from "../browser/screenshot.js";
-import { generateActions }    from "../ai/actionGenerator.js";
 import { sessionManager }     from "../ws/sessionManager.js";
 import { send }               from "../ws/send.js";
 import { resultsStore }       from "../results/store.js";
 import { waitUntilReady }     from "../browser/smartObserver.js";
 import { analysePage }        from "../browser/pageIntelligence.js";
 import { retryWithConfirmation, recheckFailedStep } from "../browser/retryEngine.js";
+import { runPreRunEval }      from "../eval/preRunEval.js";
+import { appKnowledge }       from "../knowledge/appKnowledge.js";
+import { config }             from "../config/index.js";
 
 export async function runUseCase(ws, sessionId, { useCase, url, credentials, suiteId = null }) {
   send(ws, { type: "run_start", ucId: useCase.id, title: useCase.title });
@@ -16,12 +18,12 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
   const stepResults = [];
   const insights    = [];
   let browser;
+  let evalSummary   = null;
 
-  // Helper to send both WS and collect logs
   const log = (msg, level = "info") => send(ws, { type: "log", level, msg });
   const onEvent = (event) => {
-    // Forward page analysis events to frontend
-    if (["page_analysis","form_analysis","adaptive_step_start","adaptive_step_done"].includes(event.type)) {
+    if (["page_analysis","form_analysis","adaptive_step_start","adaptive_step_done",
+         "eval_start","eval_progress","eval_result","eval_fixed","eval_blocked"].includes(event.type)) {
       send(ws, event);
     }
   };
@@ -42,10 +44,8 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
     await waitUntilReady(page, { maxWait: 10000, pollMs: 400, onLog: log, useVision: true, actionDesc: "initial page load" });
     send(ws, { type: "screenshot", data: await captureScreenshot(page), step: "Initial page load" });
 
-    // ── ADAPTIVE MODE ───────────────────────────────────────────────────────
-    // Use page intelligence to understand and adapt actions
+    // Page Intelligence
     log("◈ Page Intelligence — analysing page structure...", "ai");
-
     const pageAnalysis = await analysePage(page, { goal: useCase.title, url }).catch(() => null);
     if (pageAnalysis) {
       send(ws, { type: "page_analysis", analysis: pageAnalysis });
@@ -55,13 +55,27 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
         pageAnalysis.potentialIssues.forEach(i => log(`⚠ ${i}`, "warn"));
       }
       if (pageAnalysis.testingInsights) insights.push(pageAnalysis.testingInsights);
+
+      // Update knowledge base with page info
+      try {
+        const urlPath = new URL(url).pathname;
+        appKnowledge.updatePage(url, urlPath, {
+          title:       pageAnalysis.title,
+          pageType:    pageAnalysis.pageType,
+          forms:       pageAnalysis.forms ?? [],
+          keyElements: pageAnalysis.keyElements ?? [],
+          lastVisited: new Date().toISOString(),
+        });
+      } catch {}
     }
 
-    // Generate smart actions using both static step list + live page understanding
-    log("◈ Generating adaptive actions from page + use case steps...", "ai");
-    const actions = await generateActions(useCase, url, credentials, pageAnalysis);
+    // ── Pre-run eval gate ────────────────────────────────────────────────────
+    log("◈ Pre-run eval — checking selector confidence...", "ai");
+    const knowledgeBase = appKnowledge.getKnowledge(url);
+    evalSummary = await runPreRunEval(page, useCase, url, credentials, pageAnalysis, knowledgeBase, onEvent);
+    const actions = evalSummary.actions;
     send(ws, { type: "actions_ready", count: actions.length });
-    log(`Generated ${actions.length} intelligent actions`, "ai");
+    log(`${actions.length} actions ready (${evalSummary.fixedCount} auto-fixed, ${evalSummary.blockedCount} blocked)`, "ai");
 
     // Execute each action with retry + deferred confirmation
     for (let i = 0; i < actions.length; i++) {
@@ -71,10 +85,47 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
       }
 
       const action = actions[i];
-      send(ws, { type: "step_start", index: i, total: actions.length, description: action.description });
+
+      // Skip blocked actions that couldn't be auto-fixed
+      if (action.blocked) {
+        const stepRecord = {
+          index:       i,
+          description: action.description,
+          status:      "blocked",
+          error:       action.fixReason || "selector could not be resolved",
+          attempts:    0,
+          uncertain:   false,
+          observation: action.fixReason || "selector unresolvable",
+          evalScore:   action.evalScore,
+          blocked:     true,
+        };
+        stepResults.push(stepRecord);
+        send(ws, {
+          type:        "step_done",
+          index:       i,
+          status:      "blocked",
+          description: action.description,
+          error:       stepRecord.error,
+          attempts:    0,
+          uncertain:   false,
+          observation: stepRecord.observation,
+          evalScore:   action.evalScore,
+          blocked:     true,
+        });
+        log(`⛔ Step ${i + 1} blocked — ${stepRecord.error}`, "warn");
+        continue;
+      }
+
+      send(ws, {
+        type:        "step_start",
+        index:       i,
+        total:       actions.length,
+        description: action.description,
+        evalScore:   action.evalScore,
+        fixed:       action.fixed ?? false,
+      });
       if (action.reasoning) log(`  ◈ ${action.reasoning}`, "ai");
 
-      // Use retry engine — up to 3 attempts with deferred AI confirmation
       const result = await retryWithConfirmation(
         page,
         action,
@@ -91,6 +142,11 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
         log(`◈ Step outcome uncertain — action ran but could not confirm. Marked as passed.`, "warn");
       }
 
+      // Record selector outcome in knowledge base
+      if (action.selector) {
+        try { appKnowledge.recordSelectorResult(url, action.selector, result.success); } catch {}
+      }
+
       const stepRecord = {
         index:       i,
         description: action.description,
@@ -99,6 +155,8 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
         attempts:    result.attempts,
         uncertain:   result.uncertain || false,
         observation: result.observation,
+        evalScore:   action.evalScore,
+        fixed:       action.fixed ?? false,
       };
 
       stepResults.push(stepRecord);
@@ -112,6 +170,8 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
         attempts:    result.attempts,
         uncertain:   result.uncertain,
         observation: result.observation,
+        evalScore:   action.evalScore,
+        fixed:       action.fixed ?? false,
       });
 
       if (!result.success) {
@@ -130,7 +190,6 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
               );
               if (recovResult.success) {
                 log(`◈ Recovery succeeded: ${recovResult.observation}`, "success");
-                // Update step status to recovered
                 stepResults[stepResults.length - 1].status = "recovered";
                 stepResults[stepResults.length - 1].recoveryAction = ra.description;
                 send(ws, { type: "step_recovered", index: i, description: action.description, recoveryAction: ra.description });
@@ -142,7 +201,7 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
       }
     }
 
-    // ── Deferred recheck — revisit failed steps after suite completes ─────────
+    // ── Deferred recheck ──────────────────────────────────────────────────────
     const failedSteps = stepResults.filter(s => s.status === "fail");
     if (failedSteps.length > 0) {
       log(`◈ Deferred recheck: reviewing ${failedSteps.length} failed step(s) on final page state...`, "ai");
@@ -150,7 +209,7 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
         const recheck = await recheckFailedStep(page, fs.description, log).catch(() => null);
         if (recheck?.actuallySucceeded && recheck.confidence !== "low") {
           log(`◈ Recheck: "${fs.description}" actually succeeded — ${recheck.evidence}`, "success");
-          fs.status        = "pass-deferred";
+          fs.status          = "pass-deferred";
           fs.recheckEvidence = recheck.evidence;
           send(ws, { type: "step_recheck", description: fs.description, actuallySucceeded: true, evidence: recheck.evidence });
         }
@@ -184,9 +243,22 @@ export async function runUseCase(ws, sessionId, { useCase, url, credentials, sui
       suiteId,
       category:    useCase.category,
       priority:    useCase.priority,
+      evalScore:   evalSummary?.overallScore,
       startedAt:   new Date(startTime).toISOString(),
       completedAt: new Date().toISOString(),
     });
+
+    // Update knowledge base with run outcome
+    try {
+      appKnowledge.recordRun(url, status === "pass", evalSummary?.overallScore ?? 0);
+      if (status === "pass" && (evalSummary?.overallScore ?? 0) >= config.eval.prodReadyThreshold) {
+        appKnowledge.addLearnedPattern(url, {
+          type:      "successful-run",
+          useCase:   useCase.title,
+          avgScore:  evalSummary.overallScore,
+        });
+      }
+    } catch {}
 
     send(ws, { type: "run_complete", ucId: useCase.id, passed, failed, total: assertResults.length, runId: saved.id, status });
     return saved;

@@ -18,6 +18,7 @@ export function useRunner() {
   const [lastRunId, setLastRunId]         = useState(null);
   const [resultsBadge, setResultsBadge]   = useState(0);
   const [onRunComplete, setOnRunComplete] = useState(null);
+  const [evalState, setEvalState]         = useState(null);
 
   const wsRef      = useRef(null);
   const runLogRef  = useRef(null);
@@ -77,10 +78,30 @@ export function useRunner() {
         setSteps(prev => prev.map((s,i) => i===msg.index ? { ...s, status:"running", description:msg.description } : s));
         addRunLog(`Step ${msg.index+1}/${msg.total}: ${msg.description}`, "action");
         break;
+      case "eval_start":
+        setEvalState({ active: true, stepCount: msg.stepCount, progress: [], result: null, ucId: msg.ucId });
+        addRunLog(`◈ Pre-run eval: checking ${msg.stepCount} selectors...`, "ai");
+        break;
+      case "eval_progress":
+        setEvalState(prev => prev ? { ...prev, progress: [...prev.progress, { index: msg.index, selector: msg.selector, score: msg.score }] } : prev);
+        break;
+      case "eval_fixed":
+        setEvalState(prev => prev ? { ...prev, progress: prev.progress.map(p => p.index === msg.index ? { ...p, fixed: true, newScore: msg.newScore, oldSelector: msg.oldSelector } : p) } : prev);
+        addRunLog(`⚡ Auto-fixed step ${msg.index + 1}: ${msg.oldSelector} → ${msg.newSelector}`, "ai");
+        break;
+      case "eval_blocked":
+        setEvalState(prev => prev ? { ...prev, progress: prev.progress.map(p => p.index === msg.index ? { ...p, blocked: true, issue: msg.issue } : p) } : prev);
+        addRunLog(`⛔ Step ${msg.index + 1} blocked: ${msg.issue}`, "warn");
+        break;
+      case "eval_result":
+        setEvalState(prev => prev ? { ...prev, active: false, result: msg } : prev);
+        addRunLog(`◈ Eval complete: score ${msg.score}${msg.fixedCount ? ` · ${msg.fixedCount} fixed` : ""}${msg.blockedCount ? ` · ${msg.blockedCount} blocked` : ""}${msg.prodReady ? " · ✓ Prod Ready" : ""}`, msg.score >= 70 ? "ai" : "warn");
+        break;
       case "step_done":
         setSteps(prev => prev.map((s,i) => i===msg.index ? {
           ...s, status:msg.status, screenshot:msg.screenshot, error:msg.error,
           attempts:msg.attempts, uncertain:msg.uncertain, observation:msg.observation,
+          evalScore:msg.evalScore, fixed:msg.fixed, blocked:msg.blocked,
         } : s));
         if (msg.screenshot) setScreenshots(prev => [...prev, { data:msg.screenshot, label:msg.description, status:msg.status }]);
         if (msg.uncertain)  addRunLog(`◈ ${msg.description} — uncertain but action ran`, "warn");
@@ -201,6 +222,7 @@ export function useRunner() {
     screenshots, viewShot, setViewShot,
     assertions, suiteProgress, runTarget,
     lastRunId, resultsBadge, onRunComplete,
+    evalState,
     runUseCase, runSuite, stopRun, resetRunner,
   };
 }

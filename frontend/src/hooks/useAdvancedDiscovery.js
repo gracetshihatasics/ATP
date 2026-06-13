@@ -73,6 +73,21 @@ export function useAdvancedDiscovery() {
         setPhase("done");
         break;
 
+      case "eval_score":
+        setPlan(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            useCases: prev.useCases.map(uc =>
+              uc.id === event.ucId
+                ? { ...uc, evalScore: event.score, prodReady: event.prodReady, evalIssues: event.issues, evalSuggestions: event.suggestions }
+                : uc
+            ),
+          };
+        });
+        addLog(`◈ ${event.ucId}: eval score ${event.score}${event.prodReady ? " ✓ Prod Ready" : ""}`, event.score >= 70 ? "success" : "warn");
+        break;
+
       case "error":
         addLog(`Error: ${event.msg}`, "error");
         setPhase("error");

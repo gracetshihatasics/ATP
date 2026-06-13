@@ -30,3 +30,4 @@ Thumbs.db
 .schedules.json
 .api-scenarios.json
 .api-runs.json
+.app-knowledge.json
